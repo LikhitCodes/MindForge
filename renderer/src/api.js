@@ -26,10 +26,10 @@ async function apiFetch(path, options = {}) {
 // ─── Session ─────────────────────────────────────────────
 export const sessionApi = {
   /** Start a new session, returns { id, startTime, goal, mode, allowedApps } */
-  start: (goal, mode, allowedApps, tagId = null) =>
+  start: (goal, mode, allowedApps, tagId = null, djangoId = null) =>
     apiFetch('/session/start', {
       method: 'POST',
-      body: JSON.stringify({ goal, mode, allowedApps, tagId }),
+      body: JSON.stringify({ goal, mode, allowedApps, tagId, djangoId }),
     }),
 
   /** End the current session, returns { ok, summary } */
