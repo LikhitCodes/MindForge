@@ -826,6 +826,51 @@ Nothing else, just the JSON.`;
       } catch (err) { res.status(500).json({ error: err.message }); }
     });
 
+    app.post('/calendar/export', async (req, res) => {
+      if (!global.googleTokens) return res.status(401).json({ error: 'Not authenticated' });
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials(global.googleTokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      try {
+        const tasks = await getMatrixTasks();
+        // Export only 'schedule' and 'do_first' tasks that aren't completed and aren't already linked
+        const exportTasks = tasks.filter(t => !t.completed && !t.google_event_id && (t.quadrant === 'schedule' || t.quadrant === 'do_first'));
+        
+        let exportedCount = 0;
+        
+        // Start scheduling for tomorrow 9 AM
+        let startTime = new Date();
+        startTime.setDate(startTime.getDate() + 1);
+        startTime.setHours(9, 0, 0, 0);
+
+        for (const task of exportTasks) {
+          const endTime = new Date(startTime.getTime() + 60 * 60 * 1000); // 1 hour later
+          
+          const event = await calendar.events.insert({
+            calendarId: 'primary',
+            requestBody: {
+              summary: task.title,
+              description: `MindForge - ${task.quadrant === 'do_first' ? 'Urgent & Important Priority' : 'Scheduled Deep Work'}`,
+              start: { dateTime: startTime.toISOString() },
+              end: { dateTime: endTime.toISOString() },
+            }
+          });
+          
+          if (event.data && event.data.id) {
+            await updateMatrixTask(task.id, { google_event_id: event.data.id });
+            exportedCount++;
+            // Increment start time by 1 hour for the next task
+            startTime = endTime;
+          }
+        }
+        res.json({ ok: true, exportedCount });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
     // ─── HTTP + WebSocket server ───
     const server = http.createServer(app);
     wss = new WebSocketServer({ server });

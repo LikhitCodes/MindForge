@@ -99,6 +99,7 @@ export const calendarApi = {
   getStatus: () => apiFetch('/calendar/status'),
   getAuthUrl: () => apiFetch('/calendar/auth-url'),
   sync: () => apiFetch('/calendar/sync', { method: 'POST' }),
+  export: () => apiFetch('/calendar/export', { method: 'POST' }),
 };
 
 // ─── AI validation (for permit apps) ─────────────────────
