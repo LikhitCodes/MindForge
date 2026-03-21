@@ -28,11 +28,11 @@ const {
   getRoomMembers,
   updateMemberStatus,
   getUserActiveRoom,
-  createTag,
-  getTags,
   getTagSessions,
   logTagSession,
+  getTopGoal,
 } = require('./db');
+const { fetchDevToArticles } = require('./scraper');
 const { startScorer } = require('./scorer');
 const session = require('./session');
 
@@ -173,7 +173,7 @@ or
            const errText = await response.text();
            throw new Error(`Groq API error: ${response.status} ${errText}`);
         }
-
+        
         const data = await response.json();
         let content = data.choices[0].message.content;
         
@@ -376,6 +376,28 @@ or
       try {
         const data = await getStudyHabits();
         res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Internal Scraper Endpoint
+    app.post('/scraped-content', async (req, res) => {
+      const { topic } = req.body;
+      try {
+        // Fetch from Dev.to (handles random fallback if topic is null)
+        const articles = await fetchDevToArticles(topic);
+        res.json({ results: articles, topic: articles[0]?.topic || topic });
+      } catch (err) {
+        console.error('[Server] Scraper endpoint error:', err.message);
+        res.status(500).json({ error: 'Failed to scrape content' });
+      }
+    });
+
+    app.get('/analytics/top-goal', async (req, res) => {
+      try {
+        const data = await getTopGoal();
+        res.json(data || { goal: null, count: 0 });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }

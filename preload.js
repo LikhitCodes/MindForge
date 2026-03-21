@@ -43,4 +43,5 @@ contextBridge.exposeInMainWorld('mindforge', {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));
     }
   },
+  openExternal: (url) => ipcRenderer.send('open-external', url),
 });

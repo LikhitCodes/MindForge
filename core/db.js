@@ -260,7 +260,7 @@ async function updateStreak(date) {
       .eq('date', dateStr)
       .single();
 
-    if (data && data.read_done && data.meditation_done && data.session_done) {
+    if (data && (data.read_done || data.meditation_done || data.session_done)) {
       streak++;
       checkDate.setDate(checkDate.getDate() - 1);
     } else {
@@ -607,6 +607,38 @@ async function getTodaySummary() {
     habitsTotal: 3,
     streak: habits.streak_count || 0,
   };
+}
+
+/**
+ * Get the most frequent session goal from today
+ */
+async function getTopGoal() {
+  const today = new Date().toISOString().slice(0, 10);
+  const startOfDay = new Date(today).getTime();
+  const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
+
+  if (!supabase) return null;
+
+  const { data: sessions, error } = await supabase
+    .from('sessions')
+    .select('goal')
+    .gte('start_time', startOfDay)
+    .lt('start_time', endOfDay);
+
+  if (error || !sessions || sessions.length === 0) return null;
+
+  const counts = {};
+  sessions.forEach(s => {
+    if (s.goal && s.goal !== 'Focus Session') {
+      counts[s.goal] = (counts[s.goal] || 0) + 1;
+    }
+  });
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (sorted.length === 0) return null;
+
+  const [topGoal, count] = sorted[0];
+  return { goal: topGoal, count };
 }
 
 // ═══════════════════════════════════════
@@ -988,4 +1020,5 @@ module.exports = {
   getTags,
   getTagSessions,
   logTagSession,
+  getTopGoal,
 };

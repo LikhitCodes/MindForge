@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: true,          // listen on 0.0.0.0 → accessible from LAN / mobile
-    port: 5173,
+    port: process.env.PORT ? parseInt(process.env.PORT) : 5174,
     strictPort: true,
     proxy: {
       '/api': {

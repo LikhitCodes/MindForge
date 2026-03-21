@@ -5,7 +5,7 @@
   "scripts": {
     "start": "concurrently \"npm run ui\" \"npm run app\"",
     "ui": "cd renderer && npm run dev",
-    "app": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "app": "wait-on http://localhost:5174 && cross-env NODE_ENV=development electron .",
     "build": "cd renderer && npm run build && electron-builder",
     "seed": "node seed.js"
   },
