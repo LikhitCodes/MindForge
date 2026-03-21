@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -181,6 +181,10 @@ app.whenReady().then(async () => {
     return;
   }
 
+  ipcMain.on('open-external', (event, url) => {
+    shell.openExternal(url);
+  });
+
   // Create main window
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -219,8 +223,9 @@ app.whenReady().then(async () => {
        }
     }
     
-    console.log(`[Electron] Loading UI from http://${lanIp}:5173`);
-    mainWindow.loadURL(`http://${lanIp}:5173`);
+    const port = process.env.PORT || 5174;
+    console.log(`[Electron] Loading UI from http://${lanIp}:${port}`);
+    mainWindow.loadURL(`http://${lanIp}:${port}`);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'dist', 'index.html'));

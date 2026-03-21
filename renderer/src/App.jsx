@@ -23,6 +23,7 @@ const MAIN_NAV = [
   { label: 'Pomodoro', path: '/pomodoro' },
   { label: 'Habits', path: '/habits' },
   { label: 'Analytics', path: '/analytics' },
+  { label: 'Adaptive Learning', path: 'http://localhost:5173/', external: true },
   { label: 'Tags', path: '/tags' },
   { label: 'Matrix', path: '/matrix' },
   { label: 'Focus Room', path: '/room' },
@@ -76,6 +77,13 @@ export default function App() {
             const isActive = item.path === '/'
               ? location.pathname === '/' || location.pathname === '/session'
               : location.pathname === item.path;
+            if (item.external) {
+              return (
+                <div key={item.path} onClick={() => window.mindforge.openExternal(item.path)} style={{ color: '#6b7280', fontWeight: 400, fontSize: '15px', textDecoration: 'none', cursor: 'pointer' }}>
+                  {item.label}
+                </div>
+              );
+            }
             return (
               <NavLink key={item.path} to={item.path} style={{ color: isActive ? '#ffffff' : '#6b7280', fontWeight: isActive ? 600 : 400, fontSize: '15px', textDecoration: 'none' }}>
                 {item.label}

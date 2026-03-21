@@ -54,6 +54,7 @@ export const analyticsApi = {
   get: (range = 'week') => apiFetch(`/analytics?range=${range}`),
   timeBreakdown: (days = 7) => apiFetch(`/analytics/time-breakdown?days=${days}`),
   studyHabits: () => apiFetch('/analytics/study-habits'),
+  topGoal: () => apiFetch('/analytics/top-goal'),
   tabsDetail: (days = 7) => apiFetch(`/analytics/tabs-detail?days=${days}`),
   perSite: (days = 7, category = null) => {
     let url = `/analytics/per-site?days=${days}`;
@@ -141,6 +142,20 @@ export const djangoApi = {
     });
     if (!res.ok && res.status !== 404) throw new Error(`Django endSession → ${res.status}`);
     return res.status === 404 ? {} : res.json();
+  },
+};
+
+// ─── Scraper ──────────────────────────────────────────────
+export const scraperApi = {
+  /**
+   * Fetch web-scraped content (blogs, research papers) for a topic.
+   * Calls the internal Express endpoint.
+   */
+  fetchContent: async (topic = 'Deep Learning') => {
+    return apiFetch('/scraped-content', {
+      method: 'POST',
+      body: JSON.stringify({ topic }),
+    });
   },
 };
 
