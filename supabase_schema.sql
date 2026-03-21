@@ -1,11 +1,22 @@
 -- =============================================
--- MindForge — Supabase Database Schema
--- Copy-paste this into Supabase SQL Editor and run
+-- MindForge — Supabase Database Schema (Auth Ready)
+-- Run this in your Supabase SQL Editor
 -- =============================================
 
--- 1. Events table: tracks app/website usage
+-- Step 1. Add user_id column if it doesn't exist to existing tables
+ALTER TABLE IF EXISTS events ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS scores ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS sessions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS daily_habits ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS ramp ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS session_sites ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS tab_analytics ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+ALTER TABLE IF EXISTS content_preferences ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+
+-- Step 2. Create tables (if starting fresh)
 CREATE TABLE IF NOT EXISTS events (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   timestamp BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
   source TEXT,
   app TEXT,
@@ -14,16 +25,16 @@ CREATE TABLE IF NOT EXISTS events (
   is_idle BOOLEAN DEFAULT FALSE
 );
 
--- 2. Scores table: focus scores computed every 30s
 CREATE TABLE IF NOT EXISTS scores (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   timestamp BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
   score INTEGER NOT NULL
 );
 
--- 3. Sessions table: focus session records
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   start_time BIGINT,
   end_time BIGINT,
   goal TEXT,
@@ -40,56 +51,52 @@ CREATE TABLE IF NOT EXISTS sessions (
   audio_sec INTEGER DEFAULT 0
 );
 
--- 4. Daily habits table
 CREATE TABLE IF NOT EXISTS daily_habits (
   date TEXT PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   read_done BOOLEAN DEFAULT FALSE,
   meditation_done BOOLEAN DEFAULT FALSE,
   session_done BOOLEAN DEFAULT FALSE,
   streak_count INTEGER DEFAULT 0
 );
 
--- 5. Deep work ramp table
 CREATE TABLE IF NOT EXISTS ramp (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   date TEXT,
   target_minutes INTEGER DEFAULT 20,
   achieved INTEGER DEFAULT 0,
   success BOOLEAN DEFAULT FALSE
 );
 
--- =============================================
--- Analytics Tables (NEW — ML & Study Habits)
--- =============================================
-
--- 6. Per-site session analytics
 CREATE TABLE IF NOT EXISTS session_sites (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   hostname TEXT NOT NULL,
-  category TEXT NOT NULL DEFAULT 'neutral',    -- productive/distraction/neutral
-  content_type TEXT NOT NULL DEFAULT 'text',   -- text/video/interactive/audio
+  category TEXT NOT NULL DEFAULT 'neutral',
+  content_type TEXT NOT NULL DEFAULT 'text',
   active_seconds INTEGER NOT NULL DEFAULT 0,
   visits INTEGER NOT NULL DEFAULT 1,
-  date TEXT NOT NULL,                          -- YYYY-MM-DD for easy daily grouping
+  date TEXT NOT NULL,
   timestamp BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
 );
 
--- 7. Per-tab time analytics (Extension direct)
 CREATE TABLE IF NOT EXISTS tab_analytics (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   session_id TEXT,
   hostname TEXT,
   url TEXT,
-  category TEXT,             -- productive/distraction/neutral
-  content_type TEXT,         -- text/video/interactive/audio/mixed
+  category TEXT,
+  content_type TEXT,
   active_seconds INTEGER,
   timestamp BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
 );
 
--- 7. Content type preference aggregates (daily)
 CREATE TABLE IF NOT EXISTS content_preferences (
   id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id),
   date TEXT,
   text_seconds INTEGER DEFAULT 0,
   video_seconds INTEGER DEFAULT 0,
@@ -100,9 +107,7 @@ CREATE TABLE IF NOT EXISTS content_preferences (
   total_neutral_seconds INTEGER DEFAULT 0
 );
 
--- =============================================
--- Indexes for performance
--- =============================================
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events (timestamp);
 CREATE INDEX IF NOT EXISTS idx_scores_timestamp ON scores (timestamp);
 CREATE INDEX IF NOT EXISTS idx_ramp_date ON ramp (date);
@@ -116,8 +121,9 @@ CREATE INDEX IF NOT EXISTS idx_content_preferences_date ON content_preferences (
 
 -- =============================================
 -- Row Level Security (RLS)
--- Disable RLS for simplicity since this is a local desktop app
+-- Secure user data by ensuring users can only read/write their own records
 -- =============================================
+
 ALTER TABLE events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
@@ -127,12 +133,62 @@ ALTER TABLE session_sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tab_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content_preferences ENABLE ROW LEVEL SECURITY;
 
--- Allow public access (anon key) — needed for desktop app without auth
-CREATE POLICY "Allow all on events" ON events FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on scores" ON scores FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on sessions" ON sessions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on daily_habits" ON daily_habits FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on ramp" ON ramp FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on session_sites" ON session_sites FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on tab_analytics" ON tab_analytics FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on content_preferences" ON content_preferences FOR ALL USING (true) WITH CHECK (true);
+-- Drop old "allow all" policies safely if they exist
+DROP POLICY IF EXISTS "Allow all on events" ON events;
+DROP POLICY IF EXISTS "Allow all on scores" ON scores;
+DROP POLICY IF EXISTS "Allow all on sessions" ON sessions;
+DROP POLICY IF EXISTS "Allow all on daily_habits" ON daily_habits;
+DROP POLICY IF EXISTS "Allow all on ramp" ON ramp;
+DROP POLICY IF EXISTS "Allow all on session_sites" ON session_sites;
+DROP POLICY IF EXISTS "Allow all on tab_analytics" ON tab_analytics;
+DROP POLICY IF EXISTS "Allow all on content_preferences" ON content_preferences;
+
+-- Create authenticated user policies
+CREATE POLICY "Users can manage events" ON events FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage scores" ON scores FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage sessions" ON sessions FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage daily_habits" ON daily_habits FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage ramp" ON ramp FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage session_sites" ON session_sites FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage tab_analytics" ON tab_analytics FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage content_preferences" ON content_preferences FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- =============================================
+-- Focus Rooms
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS focus_rooms (
+  id TEXT PRIMARY KEY,                    -- 6-char room code
+  name TEXT NOT NULL,                     -- user-chosen room name
+  created_by UUID REFERENCES auth.users(id),
+  created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS focus_room_members (
+  id BIGSERIAL PRIMARY KEY,
+  room_id TEXT NOT NULL REFERENCES focus_rooms(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  display_name TEXT NOT NULL,
+  status TEXT DEFAULT 'focused',          -- 'focused' | 'distracted' | 'break'
+  score INTEGER DEFAULT 0,
+  joined_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+  UNIQUE(room_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_focus_room_members_room ON focus_room_members (room_id);
+CREATE INDEX IF NOT EXISTS idx_focus_room_members_user ON focus_room_members (user_id);
+
+ALTER TABLE focus_rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE focus_room_members ENABLE ROW LEVEL SECURITY;
+
+-- Any authenticated user can see rooms (needed to join by code)
+CREATE POLICY "Authenticated users can read rooms" ON focus_rooms FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Users can create rooms" ON focus_rooms FOR INSERT WITH CHECK (auth.uid() = created_by);
+CREATE POLICY "Room creators can delete rooms" ON focus_rooms FOR DELETE USING (auth.uid() = created_by);
+
+-- Members: anyone authenticated can read (to see room members), users manage their own rows
+CREATE POLICY "Authenticated users can read members" ON focus_room_members FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Users can join rooms" ON focus_room_members FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own status" ON focus_room_members FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Users can leave rooms" ON focus_room_members FOR DELETE USING (auth.uid() = user_id);
+
