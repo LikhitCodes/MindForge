@@ -1,5 +1,6 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { useState } from 'react';
+import { useAuth } from './AuthContext';
 import LiveScore from './components/LiveScore';
 import Heatmap from './components/Heatmap';
 import DeepWorkRamp from './components/DeepWorkRamp';
@@ -11,6 +12,7 @@ import Analytics from './components/Analytics';
 import DailySummary from './components/DailySummary';
 import DistractionShield from './components/DistractionShield';
 import AmbientPlayer from './components/AmbientPlayer';
+import AuthPage from './components/AuthPage';
 
 /* ─── Icon SVGs ─── */
 const DashboardIcon = () => (
@@ -38,6 +40,11 @@ const TimerIcon = () => (
 const AnalyticsIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+  </svg>
+);
+const LogoutIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
 
@@ -81,8 +88,24 @@ function Dashboard() {
 /* ─── Main App ─── */
 export default function App() {
   const location = useLocation();
+  const { user, loading, signOut } = useAuth();
   const [interventionMsg, setInterventionMsg] = useState(null);
 
+  // ─── Loading state ───
+  if (loading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center" style={{ background: 'var(--bg-base)' }}>
+        <div className="auth-spinner-lg" />
+      </div>
+    );
+  }
+
+  // ─── Not authenticated → show login ───
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  // ─── Authenticated → main app ───
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-base)' }}>
       {/* ─── Sidebar ─── */}
@@ -134,8 +157,25 @@ export default function App() {
         {/* Ambient Player */}
         <AmbientPlayer />
 
-        {/* Bottom: version info */}
-        <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
+        {/* Bottom: user info + sign out */}
+        <div className="px-4 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-secondary)', maxWidth: '140px' }}
+               title={user.email}>
+              {user.email}
+            </p>
+            <button
+              onClick={signOut}
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors"
+              style={{ color: 'var(--text-tertiary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--score-red)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+              title="Sign out"
+            >
+              <LogoutIcon />
+              <span>Sign Out</span>
+            </button>
+          </div>
           <p className="text-[11px] font-medium" style={{ color: 'var(--text-tertiary)' }}>
             v1.0.0
           </p>

@@ -18,6 +18,14 @@ const {
   insertSessionSites,
   getPerSiteAnalytics,
   getSessionSites,
+  // Focus Rooms
+  createRoom,
+  getRoomByCode,
+  joinRoom,
+  leaveRoom,
+  getRoomMembers,
+  updateMemberStatus,
+  getUserActiveRoom,
 } = require('./db');
 const { startScorer } = require('./scorer');
 const session = require('./session');
@@ -359,6 +367,102 @@ or
       try {
         const data = await getTodaySummary();
         res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ═══════════════════════════════════════════
+    //  FOCUS ROOM ENDPOINTS
+    // ═══════════════════════════════════════════
+
+    // Create a room
+    app.post('/room/create', async (req, res) => {
+      try {
+        const { name, displayName } = req.body;
+        if (!name) return res.status(400).json({ error: 'Room name is required' });
+
+        // Generate 6-char code
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let code = '';
+        for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+
+        const result = await createRoom(code, name);
+        if (result.error) return res.status(500).json({ error: result.error });
+
+        // Auto-join the creator
+        await joinRoom(code, displayName || 'Host');
+
+        res.json({ ok: true, room: result.data, code });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Join a room by code
+    app.post('/room/join', async (req, res) => {
+      try {
+        const { code, displayName } = req.body;
+        if (!code) return res.status(400).json({ error: 'Room code is required' });
+
+        const room = await getRoomByCode(code.toUpperCase());
+        if (!room) return res.status(404).json({ error: 'Room not found' });
+
+        const result = await joinRoom(code.toUpperCase(), displayName || 'Member');
+        if (result.error) return res.status(500).json({ error: result.error });
+
+        res.json({ ok: true, room, member: result.data });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Leave a room
+    app.post('/room/leave', async (req, res) => {
+      try {
+        const { code } = req.body;
+        if (!code) return res.status(400).json({ error: 'Room code is required' });
+
+        const result = await leaveRoom(code);
+        if (result.error) return res.status(500).json({ error: result.error });
+
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Get room members
+    app.get('/room/members/:code', async (req, res) => {
+      try {
+        const members = await getRoomMembers(req.params.code);
+        const room = await getRoomByCode(req.params.code);
+        res.json({ room, members });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Update member status (called by scorer hook)
+    app.post('/room/status', async (req, res) => {
+      try {
+        const { code, status, score } = req.body;
+        if (!code) return res.status(400).json({ error: 'Room code is required' });
+        await updateMemberStatus(code, status, score);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Get user's active room
+    app.get('/room/active', async (req, res) => {
+      try {
+        const roomId = await getUserActiveRoom();
+        if (!roomId) return res.json({ room: null });
+        const room = await getRoomByCode(roomId);
+        const members = await getRoomMembers(roomId);
+        res.json({ room, members });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }

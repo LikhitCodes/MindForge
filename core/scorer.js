@@ -1,4 +1,5 @@
 const session = require('./session');
+const { getUserActiveRoom, updateMemberStatus } = require('./db');
 
 let scorerInterval = null;
 let previousScores = [];
@@ -140,6 +141,9 @@ function startScorer(broadcastFn) {
       session: session.getStatus(),
     });
 
+    // Update Focus Room status if user is in a room
+    updateRoomStatus(score).catch(() => {});
+
     // Check for spiral
     if (detectSpiral(score)) {
       const message = getInterventionMessage(score);
@@ -153,6 +157,25 @@ function stopScorer() {
   if (scorerInterval) {
     clearInterval(scorerInterval);
     scorerInterval = null;
+  }
+}
+
+/**
+ * Update user's Focus Room status based on current score
+ */
+async function updateRoomStatus(score) {
+  try {
+    const roomId = await getUserActiveRoom();
+    if (!roomId) return;
+
+    let status = 'focused';
+    if (score < 50) status = 'distracted';
+    // Break mode check — the session won't be active during break,
+    // so the scorer won't run. But we handle it explicitly for safety.
+
+    await updateMemberStatus(roomId, status, score);
+  } catch (err) {
+    // Non-fatal: room status update failure shouldn't crash the scorer
   }
 }
 

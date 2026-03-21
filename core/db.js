@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 
 let supabase = null;
+let currentUserId = null;
 
 /**
  * Initialize Supabase client
@@ -17,6 +18,39 @@ function initDB() {
   supabase = createClient(url, key);
   console.log('[DB] Supabase client initialized');
   return true;
+}
+
+/**
+ * Re-initialize Supabase client with authenticated session.
+ * This makes RLS work — the JWT carries the user's uid.
+ */
+function setAuthSession(accessToken, refreshToken) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+
+  supabase = createClient(url, key, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
+
+  // Decode user ID from JWT payload
+  try {
+    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString());
+    currentUserId = payload.sub || null;
+    console.log(`[DB] Auth session set for user: ${currentUserId}`);
+  } catch (e) {
+    console.warn('[DB] Could not decode JWT:', e.message);
+  }
+}
+
+/**
+ * Get the current authenticated user's ID
+ */
+function getUserId() {
+  return currentUserId;
 }
 
 /**
@@ -37,6 +71,7 @@ async function insertEvent(source, appName, url, category, isIdle = false) {
     url: url || null,
     category: category || 'neutral',
     is_idle: isIdle,
+    user_id: currentUserId,
   });
   if (error) console.error('[DB] insertEvent error:', error.message);
 }
@@ -66,6 +101,7 @@ async function insertScore(score) {
   const { error } = await supabase.from('scores').insert({
     timestamp: Date.now(),
     score,
+    user_id: currentUserId,
   });
   if (error) console.error('[DB] insertScore error:', error.message);
 }
@@ -572,9 +608,148 @@ async function getTodaySummary() {
   };
 }
 
+// ═══════════════════════════════════════
+//  FOCUS ROOM FUNCTIONS
+// ═══════════════════════════════════════
+
+/**
+ * Create a focus room
+ */
+async function createRoom(roomId, name) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { data, error } = await supabase.from('focus_rooms').insert({
+    id: roomId,
+    name,
+    created_by: currentUserId,
+    created_at: Date.now(),
+  }).select().single();
+
+  if (error) {
+    console.error('[DB] createRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { data };
+}
+
+/**
+ * Get room by code
+ */
+async function getRoomByCode(code) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('focus_rooms')
+    .select('*')
+    .eq('id', code)
+    .single();
+
+  if (error) {
+    if (error.code !== 'PGRST116') console.error('[DB] getRoomByCode error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Join a room
+ */
+async function joinRoom(roomId, displayName) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { data, error } = await supabase.from('focus_room_members').upsert({
+    room_id: roomId,
+    user_id: currentUserId,
+    display_name: displayName,
+    status: 'focused',
+    score: 0,
+    joined_at: Date.now(),
+  }, { onConflict: 'room_id,user_id' }).select().single();
+
+  if (error) {
+    console.error('[DB] joinRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { data };
+}
+
+/**
+ * Leave a room
+ */
+async function leaveRoom(roomId) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { error } = await supabase
+    .from('focus_room_members')
+    .delete()
+    .eq('room_id', roomId)
+    .eq('user_id', currentUserId);
+
+  if (error) {
+    console.error('[DB] leaveRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { ok: true };
+}
+
+/**
+ * Get all members of a room
+ */
+async function getRoomMembers(roomId) {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('focus_room_members')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('joined_at', { ascending: true });
+
+  if (error) {
+    console.error('[DB] getRoomMembers error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Update a member's focus status and score
+ */
+async function updateMemberStatus(roomId, status, score) {
+  if (!supabase || !currentUserId) return;
+
+  const { error } = await supabase
+    .from('focus_room_members')
+    .update({ status, score })
+    .eq('room_id', roomId)
+    .eq('user_id', currentUserId);
+
+  if (error) {
+    console.error('[DB] updateMemberStatus error:', error.message);
+  }
+}
+
+/**
+ * Get the room the current user is in (if any)
+ */
+async function getUserActiveRoom() {
+  if (!supabase || !currentUserId) return null;
+
+  const { data, error } = await supabase
+    .from('focus_room_members')
+    .select('room_id')
+    .eq('user_id', currentUserId)
+    .limit(1)
+    .single();
+
+  if (error) return null;
+  return data?.room_id || null;
+}
+
 module.exports = {
   initDB,
   getDB,
+  setAuthSession,
+  getUserId,
   insertEvent,
   getRecentEvents,
   insertScore,
@@ -592,4 +767,12 @@ module.exports = {
   insertSessionSites,
   getPerSiteAnalytics,
   getSessionSites,
+  // Focus Rooms
+  createRoom,
+  getRoomByCode,
+  joinRoom,
+  leaveRoom,
+  getRoomMembers,
+  updateMemberStatus,
+  getUserActiveRoom,
 };
