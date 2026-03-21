@@ -1,158 +1,411 @@
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, LineChart, Line, Tooltip } from 'recharts';
-import { analyticsApi } from '../api';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, LineChart, Line, Tooltip, PieChart, Pie } from 'recharts';
+import { analyticsApi, dashboardApi, tagsApi } from '../api';
 
 const CARD = {
-  background: '#1a1a1a',
-  borderRadius: '12px',
+  background: '#111111',
+  borderRadius: '14px',
   padding: '24px',
   border: '1px solid rgba(255,255,255,0.06)',
 };
 
-const FOCUS_WINDOWS = [
-  { time: '12:00', score: 83 },
-  { time: '8:00',  score: 80 },
-  { time: '11:00', score: 80 },
-  { time: '10:00', score: 78 },
-  { time: '9:00',  score: 76 },
+const RANGES = [
+  { label: 'Today', value: 'day' },
+  { label: 'Week', value: 'week' },
+  { label: 'Month', value: 'month' },
 ];
 
-const VOLUME_DATA = [
-  { day: 'Sat, Mar 21', v: 30 },
-  { day: 'Mar 14',  v: 45 },
-  { day: 'Sun, Mar 19', v: 70 },
-  { day: 'Fri, Mar 16', v: 88 },
-  { day: 'Thu, Mar 21', v: 62 },
-  { day: '',         v: 90 },
-];
+function fmtTime(sec) {
+  if (!sec || sec <= 0) return '0m';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
 
-const INTEGRITY_DATA = [
-  { d: 'Sat, Mar 14', v: 50 },
-  { d: 'Sat, Mar 16', v: 50 },
-  { d: 'Sat, Mar 13', v: 50 },
-  { d: 'Sat, Mar 17', v: 38 },
-  { d: 'Sat, Mar 16', v: 35 },
-  { d: 'Sat, Mar 27', v: 45 },
-  { d: 'Tat, Mar 15', v: 62 },
-  { d: 'Tat, Mar 27', v: 52 },
-  { d: 'Sri, Mar 26', v: 44 },
-  { d: 'Sat, Mar 27', v: 50 },
-  { d: 'Sat, Mar 21', v: 50 },
-];
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function scoreBadge(score) {
+  const bg = score >= 70 ? 'rgba(34,197,94,0.15)' : score >= 40 ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
+  const color = score >= 70 ? '#22c55e' : score >= 40 ? '#f59e0b' : '#ef4444';
+  return { background: bg, color, padding: '3px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 700, display: 'inline-block' };
+}
+
+// ─── Range Selector ───
+function RangeSelector({ value, onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: '4px', background: '#0a0a0a', borderRadius: '10px', padding: '3px', border: '1px solid rgba(255,255,255,0.06)' }}>
+      {RANGES.map(opt => (
+        <button key={opt.value} onClick={() => onChange(opt.value)} style={{
+          padding: '6px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: 'none', cursor: 'pointer',
+          background: value === opt.value ? '#1a1a1a' : 'transparent',
+          color: value === opt.value ? '#ffffff' : '#6b7280',
+          transition: 'all 0.15s',
+        }}>{opt.label}</button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Focus Score Ring ───
+function FocusRing({ score, size = 120 }) {
+  const radius = (size - 16) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = Math.min(score, 100) / 100;
+  const offset = circumference * (1 - progress);
+  const color = score >= 70 ? '#22c55e' : score >= 40 ? '#f59e0b' : '#ef4444';
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="8" />
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth="8"
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <span style={{ fontSize: '28px', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>{score}</span>
+        <span style={{ fontSize: '10px', color: '#6b7280', letterSpacing: '1px', marginTop: '2px' }}>FOCUS</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Donut Chart ───
+function DonutChart({ productive, neutral, distraction }) {
+  const total = productive + neutral + distraction;
+  if (total === 0) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: '#6b7280', fontSize: '14px' }}>No time data yet</div>;
+  const data = [
+    { name: 'Productive', value: productive, color: '#22c55e' },
+    { name: 'Neutral', value: neutral, color: '#f59e0b' },
+    { name: 'Distraction', value: distraction, color: '#ef4444' },
+  ].filter(d => d.value > 0);
+  const pPct = Math.round((productive / total) * 100);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+      <div style={{ position: 'relative', width: '180px', height: '180px', flexShrink: 0 }}>
+        <ResponsiveContainer width={180} height={180}>
+          <PieChart>
+            <Pie data={data} dataKey="value" cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={3} stroke="none">
+              {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+            </Pie>
+            <Tooltip contentStyle={{ background: '#1a1a1a', border: 'none', borderRadius: '8px', fontSize: '12px', color: '#fff' }} formatter={(v) => fmtTime(v)} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+          <span style={{ fontSize: '28px', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>{pPct}%</span>
+          <span style={{ fontSize: '10px', color: '#6b7280', letterSpacing: '1px', marginTop: '2px' }}>FOCUS</span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {data.map(d => (
+          <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: d.color, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#ffffff' }}>{fmtTime(d.value)}</div>
+              <div style={{ fontSize: '11px', color: '#6b7280' }}>{d.name}</div>
+            </div>
+          </div>
+        ))}
+        <div style={{ marginTop: '4px', fontSize: '12px', color: '#6b7280' }}>Total: {fmtTime(total)}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LeetCode Heatmap ───
+function ContributionHeatmap({ data }) {
+  const [hoveredDay, setHoveredDay] = useState(null);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dayMs = 86400000;
+  const scoreMap = {};
+  (data || []).forEach(d => { scoreMap[d.date] = d.avg_score; });
+  const startDate = new Date(today.getTime() - 364 * dayMs);
+  const gridStart = new Date(startDate.getTime() - startDate.getDay() * dayMs);
+  const weeks = [];
+  let cur = new Date(gridStart);
+  while (cur <= today) {
+    const week = [];
+    for (let d = 0; d < 7; d++) {
+      const ds = cur.toISOString().slice(0,10);
+      week.push({ date: ds, score: cur > today ? null : (scoreMap[ds] || null), isFuture: cur > today });
+      cur = new Date(cur.getTime() + dayMs);
+    }
+    weeks.push(week);
+  }
+  const months = []; let lm = -1;
+  weeks.forEach((w, wi) => { const m = new Date(w[0].date).getMonth(); if (m !== lm) { months.push({ index: wi, label: new Date(w[0].date).toLocaleString('en',{month:'short'}) }); lm = m; } });
+  const cc = s => { if (s==null) return '#161616'; if (s>=80) return '#22c55e'; if (s>=60) return '#16a34a'; if (s>=40) return '#15803d'; if (s>=20) return '#166534'; return '#14532d'; };
+  const DL = ['','Mon','','Wed','','Fri',''];
+  return (
+    <div style={{ ...CARD, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div>
+          <div style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600 }}>Focus Contributions</div>
+          <div style={{ color: '#6b7280', fontSize: '13px', marginTop: '2px' }}>{data?.length || 0} active days in the past year</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#6b7280' }}>
+          <span>Less</span>
+          {[null,20,40,60,80].map((v,i) => <div key={i} style={{ width:'12px',height:'12px',borderRadius:'2px',background:cc(v) }} />)}
+          <span>More</span>
+        </div>
+      </div>
+      <div style={{ overflowX: 'auto', paddingBottom: '4px' }}>
+        <div style={{ display: 'flex', gap: '1px', minWidth: 'fit-content' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', paddingRight: '8px', paddingTop: '20px' }}>
+            {DL.map((d,i) => <div key={i} style={{ height:'13px',fontSize:'10px',color:'#6b7280',display:'flex',alignItems:'center' }}>{d}</div>)}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: '1px', height: '18px', marginBottom: '2px' }}>
+              {weeks.map((_,wi) => { const mo = months.find(m=>m.index===wi); return <div key={wi} style={{ width:'13px',fontSize:'10px',color:'#6b7280',flexShrink:0 }}>{mo?.label||''}</div>; })}
+            </div>
+            {Array.from({length:7},(_,di) => (
+              <div key={di} style={{ display: 'flex', gap: '1px' }}>
+                {weeks.map((w,wi) => { const c=w[di]; if(!c||c.isFuture) return <div key={wi} style={{width:'13px',height:'13px'}} />;
+                  return <div key={wi} onMouseEnter={()=>setHoveredDay(c.date)} onMouseLeave={()=>setHoveredDay(null)}
+                    style={{ width:'13px',height:'13px',borderRadius:'2px',flexShrink:0,background:cc(c.score),cursor:'crosshair',
+                      outline:hoveredDay===c.date?'1px solid rgba(255,255,255,0.4)':'none',position:'relative' }}
+                    title={c.score!=null?`${c.date}: ${c.score}%`:`${c.date}: No data`} />;
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  MAIN ANALYTICS PAGE
+// ═══════════════════════════════════════════
 
 export default function AnalyticsDashboard() {
-  const [data, setData] = useState(null);
+  const [range, setRange] = useState('week');
+  const [stats, setStats] = useState(null);
+  const [anaData, setAnaData] = useState(null);
+  const [heatData, setHeatData] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [tabData, setTabData] = useState([]);
+  const [tags, setTags] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    analyticsApi.get('week').then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
+    setLoading(true);
+    const days = range === 'day' ? 1 : range === 'month' ? 30 : 7;
+    Promise.allSettled([
+      dashboardApi.stats(range),
+      analyticsApi.get(range),
+      dashboardApi.heatmap(),
+      dashboardApi.sessions(10, 0),
+      analyticsApi.tabsDetail(days),
+      tagsApi.getAll(),
+    ]).then(([sRes, aRes, hRes, sessRes, tabRes, tagRes]) => {
+      if (sRes.status === 'fulfilled') setStats(sRes.value);
+      if (aRes.status === 'fulfilled') setAnaData(aRes.value);
+      if (hRes.status === 'fulfilled') setHeatData(hRes.value || []);
+      if (sessRes.status === 'fulfilled') setSessions(sessRes.value?.sessions || []);
+      if (tabRes.status === 'fulfilled') setTabData(tabRes.value || []);
+      if (tagRes.status === 'fulfilled') setTags(tagRes.value || []);
+      setLoading(false);
+    });
+  }, [range]);
 
-  // Build chart data from real API or fallback
-  const focusWindows = data?.bestHours?.slice(0, 5).map(h => ({
-    time: `${h.hour}:00`, score: h.avgScore,
-  })) || FOCUS_WINDOWS;
-
-  const volumeData = data?.dailyStats?.slice(-6).map(d => ({
-    day: d.date?.slice(5) || d.date, v: d.deepWork || 0,
-  })) || VOLUME_DATA;
-
-  const integrityData = data?.dailyStats?.map(d => ({
-    d: d.date?.slice(5) || d.date, v: d.avgScore || 0,
-  })) || INTEGRITY_DATA;
-
-  const totalOutput = data?.totalDeepWork || 0;
-  const efficiency  = data?.avgScore || 0;
-  const volume      = data?.totalSessions || 0;
+  // Chart data from analyticsApi
+  const focusWindows = anaData?.bestHours?.slice(0,5).map(h => ({ time: `${h.hour}:00`, score: h.avgScore })) || [];
+  const volumeData = anaData?.dailyStats?.slice(-10).map(d => ({ day: d.date?.slice(5)||d.date, v: d.deepWork||0 })) || [];
+  const integrityData = anaData?.dailyStats?.map(d => ({ d: d.date?.slice(5)||d.date, v: d.avgScore||0 })) || [];
 
   return (
-    <div style={{ width: '100%', background: '#0d0d0f', padding: '40px 48px', boxSizing: 'border-box', minHeight: 'calc(100vh - 60px)', overflowY: 'auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+    <div style={{ width: '100%', height: '100%', overflowY: 'auto', overflowX: 'hidden', background: '#0a0a0a', scrollBehavior: 'smooth' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 40px 80px' }}>
 
-      {/* Page Header */}
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ color: '#ffffff', fontSize: '32px', fontWeight: 700, margin: '0 0 4px 0' }}>
-          <span style={{ fontStyle: 'italic', fontWeight: 400 }}>Seseric</span> Dashboard
-        </h1>
-        <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>Key Deep Works list of deep work performance metrics.</p>
-      </div>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
+          <div>
+            <h1 style={{ color: '#ffffff', fontSize: '28px', fontWeight: 700, margin: 0, letterSpacing: '-0.5px' }}>Analytics</h1>
+            <p style={{ color: '#6b7280', fontSize: '14px', margin: '4px 0 0' }}>Your focus performance at a glance.</p>
+          </div>
+          <RangeSelector value={range} onChange={setRange} />
+        </div>
 
-      {/* TOP ROW: 3 stat cards + Top 5 Focus Windows + Volume Output */}
-      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '16px', marginBottom: '16px', alignItems: 'start' }}>
-
-        {/* LEFT: 3 stacked stat cards */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* ROW 1: Stats Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '20px' }}>
+          <div style={{ ...CARD, display: 'flex', alignItems: 'center', gap: '20px' }}>
+            <FocusRing score={stats?.avgFocusScore || 0} size={90} />
+            <div>
+              <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#6b7280' }}>Avg Focus</div>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#ffffff', lineHeight: 1, marginTop: '4px' }}>{loading ? '...' : `${stats?.avgFocusScore || 0}%`}</div>
+            </div>
+          </div>
           <div style={CARD}>
-            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>TOTAL OUTPUT</div>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#6b7280', marginBottom: '12px' }}>Sessions</div>
+            <span style={{ fontSize: '40px', fontWeight: 800, color: '#a78bfa', lineHeight: 1 }}>{loading ? '...' : stats?.totalSessions || 0}</span>
+          </div>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#6b7280', marginBottom: '12px' }}>Deep Work</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-              <span style={{ fontSize: '48px', fontWeight: 800, color: '#22c55e', lineHeight: 1 }}>{loading ? '...' : totalOutput}</span>
-              <span style={{ fontSize: '18px', color: '#22c55e', fontWeight: 500 }}>min</span>
+              <span style={{ fontSize: '40px', fontWeight: 800, color: '#22c55e', lineHeight: 1 }}>{loading ? '...' : stats?.totalDeepWorkMin || 0}</span>
+              <span style={{ fontSize: '16px', color: '#22c55e', fontWeight: 500 }}>min</span>
             </div>
           </div>
           <div style={CARD}>
-            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>EFFICIENCY</div>
-            <span style={{ fontSize: '48px', fontWeight: 800, color: '#f59e0b', lineHeight: 1 }}>{loading ? '...' : efficiency}</span>
-          </div>
-          <div style={CARD}>
-            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>VOLUME</div>
-            <span style={{ fontSize: '48px', fontWeight: 800, color: '#a855f7', lineHeight: 1 }}>{loading ? '...' : volume}</span>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#6b7280', marginBottom: '12px' }}>Streak</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+              <span style={{ fontSize: '40px', fontWeight: 800, color: '#f97316', lineHeight: 1 }}>{loading ? '...' : stats?.currentStreak || 0}</span>
+              <span style={{ fontSize: '22px' }}>🔥</span>
+            </div>
           </div>
         </div>
 
-        {/* MIDDLE: Top 5 Focus Windows */}
-        <div style={CARD}>
-          <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>TOP 5 FOCUS WINDOWS</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {focusWindows.map((fw, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ color: '#6b7280', fontSize: '13px', width: '42px', flexShrink: 0 }}>{fw.time}</span>
-              <div style={{ flex: 1, height: '28px', background: '#111', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
-                <div style={{ width: `${Math.min(fw.score, 100)}%`, height: '100%', background: '#22c55e', borderRadius: '4px', opacity: 0.85 }} />
+        {/* ROW 2: Donut + Peak Hours */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '20px' }}>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>TIME DISTRIBUTION</div>
+            <DonutChart productive={stats?.totalProductiveSec||0} neutral={stats?.totalNeutralSec||0} distraction={stats?.totalDistractionSec||0} />
+          </div>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>PEAK FOCUS HOURS</div>
+            {focusWindows.length === 0 ? (
+              <div style={{ color: '#6b7280', fontSize: '13px', textAlign: 'center', padding: '40px 0' }}>No data yet</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {focusWindows.map((fw, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ color: '#6b7280', fontSize: '13px', width: '42px', flexShrink: 0 }}>{fw.time}</span>
+                    <div style={{ flex: 1, height: '28px', background: '#0a0a0a', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(fw.score,100)}%`, height: '100%', background: 'linear-gradient(90deg, #16a34a, #22c55e)', borderRadius: '4px', transition: 'width 0.5s' }} />
+                    </div>
+                    <span style={{ color: '#ffffff', fontSize: '13px', fontWeight: 600, width: '28px', textAlign: 'right', flexShrink: 0 }}>{fw.score}</span>
+                  </div>
+                ))}
               </div>
-              <span style={{ color: '#ffffff', fontSize: '13px', fontWeight: 600, width: '24px', textAlign: 'right', flexShrink: 0 }}>{fw.score}</span>
+            )}
+          </div>
+        </div>
+
+        {/* ROW 3: Volume + Focus Trend */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '20px' }}>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>DAILY DEEP WORK</div>
+            {volumeData.length === 0 ? <div style={{ color: '#6b7280', fontSize: '13px', textAlign: 'center', padding: '40px 0' }}>No data yet</div> : (
+              <div style={{ height: '180px' }}>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={volumeData} barSize={24} margin={{ top: 4, right: 0, bottom: 20, left: -20 }}>
+                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="day" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" />
+                    <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ background: '#1a1a1a', border: 'none', borderRadius: '6px', fontSize: '12px', color: '#fff' }} />
+                    <Bar dataKey="v" radius={[4,4,0,0]}>
+                      {volumeData.map((e,i) => <Cell key={i} fill={e.v >= 30 ? '#22c55e' : '#374151'} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>FOCUS TREND</div>
+            {integrityData.length === 0 ? <div style={{ color: '#6b7280', fontSize: '13px', textAlign: 'center', padding: '40px 0' }}>No data yet</div> : (
+              <div style={{ height: '180px' }}>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={integrityData} margin={{ top: 8, right: 20, bottom: 20, left: -20 }}>
+                    <CartesianGrid stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="d" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-15} textAnchor="end" />
+                    <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0,100]} />
+                    <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #374151', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
+                    <Line type="monotone" dataKey="v" stroke="#a78bfa" strokeWidth={2.5} dot={{ fill: '#a78bfa', r: 4, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#a78bfa' }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ROW 4: Contribution Heatmap */}
+        <div style={{ marginBottom: '20px' }}>
+          <ContributionHeatmap data={heatData} />
+        </div>
+
+        {/* ROW 5: Recent Sessions */}
+        <div style={{ ...CARD, marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 600 }}>Recent Sessions</div>
+            <span style={{ color: '#6b7280', fontSize: '12px' }}>{sessions.length} shown</span>
+          </div>
+          {sessions.length === 0 ? (
+            <div style={{ color: '#6b7280', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>No sessions yet</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 140px', gap: '12px', padding: '8px 12px', fontSize: '11px', color: '#6b7280', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                <span>Goal</span><span>Score</span><span>Deep Work</span><span>Date</span>
+              </div>
+              {sessions.map((s, i) => (
+                <div key={s.id||i} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 140px', gap: '12px', padding: '10px 12px',
+                  borderRadius: '8px', background: i%2===0?'rgba(255,255,255,0.02)':'transparent', fontSize: '14px', color: '#d1d5db', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 500, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.goal||'Untitled Session'}</span>
+                  <span style={scoreBadge(s.avg_score||0)}>{s.avg_score||0}%</span>
+                  <span>{s.deep_work_minutes||0}m</span>
+                  <span style={{ color: '#9ca3af', fontSize: '13px' }}>{fmtDate(s.start_time)}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+        </div>
+
+        {/* ROW 6: Tab Analytics */}
+        {tabData.length > 0 && (
+          <div style={{ ...CARD, marginBottom: '20px' }}>
+            <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Site Breakdown</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr 1fr 80px', gap: '8px', padding: '8px 12px', fontSize: '11px', color: '#6b7280', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                <span>Site</span><span>Total</span><span>Productive</span><span>Distraction</span><span>Neutral</span><span>Visits</span>
+              </div>
+              {tabData.slice(0,15).map((site, i) => (
+                <div key={site.hostname} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr 1fr 80px', gap: '8px', padding: '10px 12px',
+                  borderRadius: '8px', background: i%2===0?'rgba(255,255,255,0.02)':'transparent', fontSize: '13px', color: '#d1d5db', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{site.hostname}</span>
+                  <span>{fmtTime(site.total_seconds)}</span>
+                  <span style={{ color: '#22c55e' }}>{fmtTime(site.productive_seconds)}</span>
+                  <span style={{ color: '#ef4444' }}>{fmtTime(site.distraction_seconds)}</span>
+                  <span style={{ color: '#f59e0b' }}>{fmtTime(site.neutral_seconds)}</span>
+                  <span>{site.visits}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* RIGHT: Volume Output bar chart */}
-        <div style={CARD}>
-          <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>VOLUME OUTPUT</div>
-          <div style={{ height: '200px' }}>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={VOLUME_DATA} barSize={30} margin={{ top: 4, right: 0, bottom: 20, left: -20 }}>
-                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="day" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 100]} ticks={[30, 50, 70, 100]} />
-                <Bar dataKey="v" fill="#22c55e" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        {/* ROW 7: Subject Targets */}
+        {tags.length > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <h3 style={{ color: '#ffffff', fontSize: '16px', fontWeight: 600, marginBottom: '14px' }}>Subject Targets</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+              {tags.map(tag => {
+                const pct = Math.min(100, Math.round(((tag.logged_minutes||0)/tag.target_minutes)*100));
+                return (
+                  <div key={tag.id} style={{ ...CARD, padding: '16px 20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>{tag.name}</span>
+                      <span style={{ color: '#9ca3af', fontSize: '12px' }}>{tag.logged_minutes||0} / {tag.target_minutes}m</span>
+                    </div>
+                    <div style={{ height: '6px', background: '#1a1a1a', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: tag.color||'#22c55e', borderRadius: '4px', transition: 'width 0.5s' }} />
+                    </div>
+                    <div style={{ marginTop: '6px', fontSize: '11px', color: '#6b7280', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{tag.target_type==='daily'?'Today':'This Week'}</span>
+                      {pct>=100 && <span style={{ color: tag.color||'#22c55e', fontWeight: 600 }}>Done ✓</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* BOTTOM ROW: Historical Focus Integrity (full width line chart) */}
-      <div style={CARD}>
-        <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>HISTORICAL FOCUS INTEGRITY</div>
-        <div style={{ height: '200px' }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={INTEGRITY_DATA} margin={{ top: 8, right: 20, bottom: 20, left: -20 }}>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="d" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-15} textAnchor="end" />
-              <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} domain={[30, 100]} ticks={[40, 50, 100]} />
-              <Tooltip
-                contentStyle={{ background: '#1a1a1a', border: '1px solid #374151', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
-                cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
-              />
-              <Line
-                type="monotone" dataKey="v" stroke="#f59e0b" strokeWidth={2}
-                dot={{ fill: '#f59e0b', r: 4, strokeWidth: 0 }}
-                activeDot={{ r: 6, fill: '#f59e0b' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       </div>
-
     </div>
   );
 }

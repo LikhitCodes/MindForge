@@ -17,7 +17,7 @@ import AuthPage from './components/AuthPage';
 import TagsManager from './components/TagsManager';
 
 const MAIN_NAV = [
-  { label: 'Dashboard', path: '/' },
+  { label: 'Home', path: '/' },
   { label: 'Session', path: '/session' },
   { label: 'Pomodoro', path: '/pomodoro' },
   { label: 'Habits', path: '/habits' },

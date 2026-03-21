@@ -32,6 +32,9 @@ const {
   getTags,
   getTagSessions,
   logTagSession,
+  getDetailedTabAnalytics,
+  getDashboardStats,
+  getSessionHistory,
 } = require('./db');
 const { startScorer } = require('./scorer');
 const session = require('./session');
@@ -278,16 +281,36 @@ or
     //  DATA ENDPOINTS (Supabase)
     // ═══════════════════════════════════════════
 
+    // Track last browser event timestamp for elapsed time calculation
+    let lastBrowserEventTime = 0;
+    let lastBrowserHostname = '';
+
     app.post('/browser-event', async (req, res) => {
       try {
-        const { url, category, contentType } = req.body;
+        const { url, category, contentType, timestamp } = req.body;
+        const now = timestamp || Date.now();
+
         // During active session, add to session memory
         if (session.isActive()) {
           session.addEvent('chrome', 'Chrome', url, category || 'browser', false, contentType || 'text');
           try {
             const hostname = new URL(url).hostname;
-            // Accumulate URL visits locally (total active_seconds will be imperfect here, mostly driven by tab_analytics payload later)
+
+            // Calculate elapsed seconds since last browser event on the SAME host
+            // Cap at 5 minutes to avoid inflated times from idle/unfocused periods
+            let elapsedSec = 0;
+            if (lastBrowserEventTime > 0 && lastBrowserHostname) {
+              const diff = Math.round((now - lastBrowserEventTime) / 1000);
+              if (diff > 0 && diff <= 300) { // max 5 min
+                // Attribute time to the PREVIOUS hostname (where user was)
+                session.addBrowserTab(lastBrowserHostname, '', category, contentType, diff);
+              }
+            }
+
+            // Record this visit (0 elapsed — time gets attributed on the NEXT event)
             session.addBrowserTab(hostname, url, category, contentType, 0);
+            lastBrowserEventTime = now;
+            lastBrowserHostname = hostname;
           } catch (e) {
             // invalid URL parsing
           }
@@ -444,6 +467,40 @@ or
     app.get('/summary/today', async (req, res) => {
       try {
         const data = await getTodaySummary();
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ─── Detailed Tab Analytics ───
+    app.get('/analytics/tabs-detail', async (req, res) => {
+      try {
+        const days = parseInt(req.query.days) || 7;
+        const data = await getDetailedTabAnalytics(days);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ─── Dashboard Stats ───
+    app.get('/dashboard/stats', async (req, res) => {
+      try {
+        const range = req.query.range || 'week';
+        const data = await getDashboardStats(range);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ─── Session History ───
+    app.get('/sessions/history', async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        const data = await getSessionHistory(limit, offset);
         res.json(data);
       } catch (err) {
         res.status(500).json({ error: err.message });

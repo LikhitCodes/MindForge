@@ -45,6 +45,8 @@ export const dashboardApi = {
   ramp:    () => apiFetch('/ramp'),
   debt:    () => apiFetch('/debt'),
   heatmap: () => apiFetch('/scores/heatmap'),
+  stats:   (range = 'week') => apiFetch(`/dashboard/stats?range=${range}`),
+  sessions: (limit = 20, offset = 0) => apiFetch(`/sessions/history?limit=${limit}&offset=${offset}`),
 };
 
 // ─── Analytics ───────────────────────────────────────────
@@ -52,6 +54,12 @@ export const analyticsApi = {
   get: (range = 'week') => apiFetch(`/analytics?range=${range}`),
   timeBreakdown: (days = 7) => apiFetch(`/analytics/time-breakdown?days=${days}`),
   studyHabits: () => apiFetch('/analytics/study-habits'),
+  tabsDetail: (days = 7) => apiFetch(`/analytics/tabs-detail?days=${days}`),
+  perSite: (days = 7, category = null) => {
+    let url = `/analytics/per-site?days=${days}`;
+    if (category) url += `&category=${category}`;
+    return apiFetch(url);
+  },
 };
 
 // ─── Habits ──────────────────────────────────────────────

@@ -1,15 +1,43 @@
-// MindForge — Supabase Auth Module
-// Handles sign up, sign in, sign out, session management
-
 const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
+const path = require('path');
 
 let supabase = null;
 let currentUser = null;
 let authChangeCallbacks = [];
 
+// ─── Persistent file-based auth storage ───
+// Saves tokens to a JSON file so sessions survive app restarts
+const AUTH_FILE = path.join(
+  process.env.APPDATA || process.env.HOME || '/tmp',
+  '.mindforge-auth-session.json'
+);
+
+let authCache = {};
+try {
+  if (fs.existsSync(AUTH_FILE)) {
+    authCache = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+  }
+} catch (_) {
+  authCache = {};
+}
+
+function saveAuthToDisk() {
+  try {
+    fs.writeFileSync(AUTH_FILE, JSON.stringify(authCache), 'utf8');
+  } catch (e) {
+    console.warn('[Auth] Could not persist session to disk:', e.message);
+  }
+}
+
+const authStorage = {
+  getItem: (key) => authCache[key] || null,
+  setItem: (key, value) => { authCache[key] = value; saveAuthToDisk(); },
+  removeItem: (key) => { delete authCache[key]; saveAuthToDisk(); },
+};
+
 /**
  * Initialize the auth-only Supabase client.
- * This is separate from the DB client so auth can work before DB is ready.
  */
 function initAuth() {
   const url = process.env.SUPABASE_URL;
@@ -24,12 +52,7 @@ function initAuth() {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      // Use in-memory storage for Electron (no localStorage in main process)
-      storage: {
-        getItem: (key) => authStorage[key] || null,
-        setItem: (key, value) => { authStorage[key] = value; },
-        removeItem: (key) => { delete authStorage[key]; },
-      },
+      storage: authStorage,
     },
   });
 
@@ -45,9 +68,6 @@ function initAuth() {
   console.log('[Auth] Supabase auth client initialized');
   return true;
 }
-
-// Simple in-memory storage for auth tokens in Electron main process
-const authStorage = {};
 
 /**
  * Sign up with email & password
