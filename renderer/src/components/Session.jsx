@@ -271,7 +271,7 @@ function QrWaitPage({ sessionId, djangoSessionId, pwaUrl, goal, mode, pcIp, onCo
 /* ═══════════════════════════════════════════════════════
    STATE 3 — Active Session
    ═══════════════════════════════════════════════════════ */
-function ActivePage({ sessionId, goal, mode, pcIp, onEnd }) {
+function ActivePage({ sessionId, djangoSessionId, pwaUrl, goal, mode, pcIp, onEnd }) {
   const [elapsed, setElapsed] = useState(0);
   const [focusScore, setFocusScore] = useState(null);
   const [avgScore, setAvgScore] = useState(null);
@@ -308,13 +308,27 @@ function ActivePage({ sessionId, goal, mode, pcIp, onEnd }) {
     if (msg.type === 'score_update') {
       setFocusScore(msg.score);
     }
-    if (msg.type === 'event' || msg.type === 'phone_event' || msg.type === 'session_event') {
+    if (msg.type === 'event' || msg.type === 'phone_event' || msg.type === 'session_event' || msg.type === 'raw_mobile_signal' || msg.type === 'distraction_alert') {
       const ts = new Date(msg.timestamp || Date.now());
       const timeStr = ts.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+      let appName = msg.app || msg.appName || 'Unknown';
+      let cat = msg.category || 'neutral';
+      let src = msg.source || 'desktop';
+
+      if (msg.type === 'raw_mobile_signal') {
+        appName = msg.signal_type || 'Phone';
+        src = 'phone';
+      } else if (msg.type === 'distraction_alert') {
+        appName = msg.alert_type || 'Phone Distraction';
+        cat = 'distraction';
+        src = 'phone';
+      }
+
       setEvents(prev => [{
-        app: msg.app || msg.appName || 'Unknown',
-        category: msg.category || 'neutral',
-        source: msg.source || 'desktop',
+        app: appName,
+        category: cat,
+        source: src,
         time: timeStr,
         timestamp: msg.timestamp || Date.now(),
       }, ...prev].slice(0, 20)); // keep last 20
@@ -346,7 +360,9 @@ function ActivePage({ sessionId, goal, mode, pcIp, onEnd }) {
   const displayScore = avgScore ?? focusScore ?? '--';
 
   const djangoHost = pcIp || window.location.hostname;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(`http://${djangoHost}:8000/join?session=${sessionId || 'ACTIVE'}`)}`;  
+  const qrUrl = pwaUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pwaUrl)}`
+    : `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(`http://${djangoHost}:8000/join?session=${djangoSessionId || 'ACTIVE'}`)}`;
 
   return (
     <div style={{ width: '100%', background: '#000', animation: 'fadeIn 0.3s ease' }}>
@@ -605,7 +621,7 @@ export default function Session() {
 
       // ── Step 3: create Express session (for Supabase + desktop watcher) ──
       try {
-        const result = await sessionApi.start(goal, mode, apps, tagId);
+        const result = await sessionApi.start(goal, mode, apps, tagId, djangoId);
         setSessionId(result.session?.id || result.id || null);
       } catch (err) {
         console.warn('[Session] Express session start error:', err.message);
@@ -670,6 +686,8 @@ export default function Session() {
       {state === 'active' && (
         <ActivePage
           sessionId={sessionId}
+          djangoSessionId={djangoSessionId}
+          pwaUrl={pwaUrl}
           goal={goal} mode={mode} pcIp={pcIp}
           onEnd={handleEnd}
         />

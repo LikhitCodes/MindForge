@@ -47,6 +47,7 @@ const { google } = require('googleapis');
 
 const PORT = 39871;
 let wss = null;
+let currentDjangoWs = null;
 
 /**
  * Broadcast to all WebSocket clients
@@ -65,9 +66,14 @@ function broadcast(data) {
  * we relay it to Electron so the QR wait page transitions to active.
  */
 function startDjangoBridge(sessionId) {
-  if (!sessionId) return;
+  if (!sessionId) return null;
+  if (currentDjangoWs) {
+    try { currentDjangoWs.close(); } catch (_) {}
+    currentDjangoWs = null;
+  }
   try {
     const djangoWs = new (require('ws'))(`ws://127.0.0.1:8000/ws/session/${sessionId}/`);
+    currentDjangoWs = djangoWs;
     djangoWs.on('open', () => {
       console.log(`[Bridge] Connected to Django WS for session ${sessionId}`);
       // Identify as desktop so Django marks it connected
@@ -92,7 +98,10 @@ function startDjangoBridge(sessionId) {
       } catch (_) { }   
     });
     djangoWs.on('error', (e) => console.warn('[Bridge] Django WS error:', e.message));
-    djangoWs.on('close', () => console.log('[Bridge] Django WS closed'));
+    djangoWs.on('close', () => {
+      console.log('[Bridge] Django WS closed');
+      currentDjangoWs = null;
+    });
     return djangoWs;
   } catch (e) {
     console.warn('[Bridge] Could not start Django bridge:', e.message);
@@ -265,8 +274,12 @@ Nothing else, just the JSON.`;
 
     // Start a focus session
     app.post('/session/start', (req, res) => {
-      const { goal, mode, allowedApps, tagId } = req.body;
+      const { goal, mode, allowedApps, tagId, djangoId } = req.body;
       const info = session.startSession(goal || 'Focus Session', mode || 'basic', allowedApps || [], tagId);
+
+      if (djangoId) {
+        startDjangoBridge(djangoId);
+      }
 
       // Broadcast to UI
       broadcast({ type: 'session_started', ...info });
@@ -276,8 +289,11 @@ Nothing else, just the JSON.`;
     // End the current session → push summary to Supabase
     app.post('/session/end', async (req, res) => {
       const summary = session.endSession();
-      if (!summary) {
-        return res.json({ ok: false, error: 'No active session' });
+      if (!summary) return res.json({ ok: false, error: 'No active session' });
+
+      if (currentDjangoWs) {
+        try { currentDjangoWs.close(); } catch (_) {}
+        currentDjangoWs = null;
       }
 
       // Push session summary to Supabase
