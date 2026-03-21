@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* =========================================
+   MindForge — Premium Minimalist System
+   ========================================= */
+
+:root {
+  /* Ultra-clean Zinc/Slate palette */
+  --bg-base: #09090b;       /* zinc-950 */
+  --bg-secondary: #121214;  
+  --bg-card: #18181b;       /* zinc-900 */
+  --bg-card-hover: #27272a; /* zinc-800 */
+  
+  --border: #27272a;        /* zinc-800 */
+  --border-active: #3f3f46; /* zinc-700 */
+
+  /* Typography */
+  --text-primary: #fafafa;  /* zinc-50 */
+  --text-secondary: #a1a1aa;/* zinc-400 */
+  --text-tertiary: #71717a; /* zinc-500 */
+
+  /* Functional Colors (Muted, elegant) */
+  --score-green: #10b981;   /* emerald-500 */
+  --score-amber: #f59e0b;   /* amber-500 */
+  --score-red: #ef4444;     /* red-500 */
+  
+  /* Accent */
+  --accent-primary: #ffffff;
+  --accent-muted: #e4e4e7;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Premium Card (Replaces glass-card) */
+.premium-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.premium-card:hover {
+  border-color: var(--border-active);
+}
+
+/* Elegant UI Button */
+.btn-primary {
+  background: var(--accent-primary);
+  color: var(--bg-base);
+  font-weight: 600;
+  border-radius: 8px;
+  transition: transform 0.1s ease, opacity 0.2s ease;
+}
+.btn-primary:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-secondary {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  font-weight: 500;
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+.btn-secondary:hover {
+  background: var(--border);
+}
+
+/* Animations */
+@keyframes slide-up {
+  0% { transform: translateY(10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+/* Electron drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}

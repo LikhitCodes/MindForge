@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "MindForge",
+  "description": "Focus tracking companion for MindForge desktop app",
+  "version": "3.0.0",
+
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "notifications",
+    "scripting",
+    "unlimitedStorage"
+  ],
+
+  "host_permissions": [
+    "http://localhost:39871/*",
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["libs/Readability.js", "extractor.js", "content.js"],
+      "css": [],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "MindForge"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "overlay/overlay.css"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
