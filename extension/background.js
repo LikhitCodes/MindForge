@@ -19,12 +19,17 @@ import {
   saveContentPreferences,
 } from './tracker.js';
 
-const API_URL = 'http://localhost:39871';
-const WS_URL = 'ws://localhost:39871';
+// ─── Server URLs ───
+// Primary: Electron local server (always running with the desktop app)
+const ELECTRON_URL   = 'http://localhost:39871';
+const ELECTRON_WS    = 'ws://localhost:39871';
+// Secondary: Django backend (cloud features, session history)
+const DJANGO_API_URL = 'http://localhost:8000/api';
+const DJANGO_WS_BASE = 'ws://localhost:8000/ws/session';
 
 // ─── In-memory state ───
 
-let sessionState = { active: false, goal: '', score: 0, label: '', startTime: 0 };
+let sessionState = { active: false, sessionId: null, goal: '', score: 0, label: '', startTime: 0 };
 let wsConnection = null;
 let wsReconnectDelay = 1000;
 let wsReconnectTimer = null;
@@ -105,15 +110,37 @@ async function addClassificationEntry(entry) {
 
 // ─── Desktop App Communication ───
 
-async function sendEventToDesktop(url, title, category, confidence, contentType) {
+/**
+ * Ping Electron's /ping endpoint to check if the desktop app is running.
+ */
+async function checkElectronAlive() {
   try {
-    const resp = await fetch(`${API_URL}/browser-event`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, title, category, confidence, contentType, timestamp: Date.now() }),
-    });
+    const resp = await fetch(`${ELECTRON_URL}/ping`, { signal: AbortSignal.timeout(2000) });
+    if (resp.ok) {
+      desktopAlive = true;
+      return true;
+    }
+  } catch { /* not reachable */ }
+  desktopAlive = false;
+  return false;
+}
+
+async function sendEventToDesktop(url, title, category, confidence, contentType) {
+  const payload = JSON.stringify({ url, title, category, confidence, contentType, timestamp: Date.now() });
+  const headers = { 'Content-Type': 'application/json' };
+
+  // Try Electron first
+  try {
+    const resp = await fetch(`${ELECTRON_URL}/browser-event`, { method: 'POST', headers, body: payload });
     const data = await resp.json();
     desktopAlive = true;
+    return data;
+  } catch { /* Electron not reachable, try Django */ }
+
+  // Fallback to Django
+  try {
+    const resp = await fetch(`${DJANGO_API_URL}/browser-event`, { method: 'POST', headers, body: payload });
+    const data = await resp.json();
     return data;
   } catch {
     desktopAlive = false;
@@ -122,12 +149,18 @@ async function sendEventToDesktop(url, title, category, confidence, contentType)
 }
 
 async function sendAnalyticsToDesktop(analytics) {
+  const payload = JSON.stringify(analytics);
+  const headers = { 'Content-Type': 'application/json' };
+
+  // Try Electron first
   try {
-    const resp = await fetch(`${API_URL}/analytics/tab-time`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(analytics),
-    });
+    const resp = await fetch(`${ELECTRON_URL}/analytics/tab-time`, { method: 'POST', headers, body: payload });
+    return await resp.json();
+  } catch { /* Electron not reachable, try Django */ }
+
+  // Fallback to Django
+  try {
+    const resp = await fetch(`${DJANGO_API_URL}/analytics/tab-time`, { method: 'POST', headers, body: payload });
     return await resp.json();
   } catch {
     return null;
@@ -135,72 +168,119 @@ async function sendAnalyticsToDesktop(analytics) {
 }
 
 async function fetchSessionStatus() {
+  // Try Electron first (endpoint: /session/status — no /api prefix)
   try {
-    const resp = await fetch(`${API_URL}/session/status`);
+    const resp = await fetch(`${ELECTRON_URL}/session/status`, { signal: AbortSignal.timeout(2000) });
     const data = await resp.json();
     desktopAlive = true;
+    return applySessionData(data);
+  } catch { /* Electron not reachable, try Django */ }
 
-    if (data.active) {
-      sessionState = {
-        active: true,
-        goal: data.goal || '',
-        score: data.lastScore || data.avgScore || 0,
-        label: data.lastScore >= 70 ? 'Deep work' : data.lastScore >= 50 ? 'Moderate' : 'Distracted',
-        startTime: data.startTime || Date.now(),
-        elapsedMinutes: data.elapsedMinutes || 0,
-      };
-    } else {
-      sessionState = { active: false, goal: '', score: 0, label: '', startTime: 0 };
-    }
-    return sessionState;
+  // Fallback to Django
+  try {
+    const resp = await fetch(`${DJANGO_API_URL}/sessions/status/`);
+    const data = await resp.json();
+    desktopAlive = true;
+    return applySessionData(data);
   } catch {
     desktopAlive = false;
     return sessionState;
   }
 }
 
+/** Shared helper to apply session data from either server */
+function applySessionData(data) {
+  if (data.active && (data.session_id || data.id)) {
+    sessionState = {
+      active: true,
+      sessionId: data.session_id || data.id,
+      goal: data.goal || '',
+      score: data.last_score || data.lastScore || data.avgScore || 0,
+      label: data.label || 'Deep work',
+      startTime: data.start_time || data.startTime || Date.now(),
+      elapsedMinutes: data.elapsedMinutes || 0,
+    };
+    // Auto-connect WS if active
+    connectWebSocket(sessionState.sessionId);
+  } else {
+    sessionState = { active: false, sessionId: null, goal: '', score: 0, label: '', startTime: 0 };
+  }
+  return sessionState;
+}
+
 // ─── WebSocket Connection ───
 
-function connectWebSocket() {
+function connectWebSocket(sessionId) {
   if (wsConnection && wsConnection.readyState <= 1) return;
 
-  try {
-    wsConnection = new WebSocket(WS_URL);
+  // Try Electron WS first (raw WebSocket, no session path needed)
+  // Then fall back to Django WS (needs session ID in path)
+  const electronWsUrl = ELECTRON_WS;
+  const djangoWsUrl = sessionId ? `${DJANGO_WS_BASE}/${sessionId}/` : null;
 
-    wsConnection.onopen = () => {
-      console.log('[MindForge] WebSocket connected');
-      desktopAlive = true;
-      wsReconnectDelay = 1000;
-    };
-
-    wsConnection.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleWSMessage(data);
-      } catch (err) {
-        console.warn('[MindForge] WebSocket parse error:', err.message);
-      }
-    };
-
-    wsConnection.onclose = () => {
-      console.log('[MindForge] WebSocket disconnected');
-      wsConnection = null;
+  tryConnectWS(electronWsUrl, 'Electron').catch(() => {
+    if (djangoWsUrl) {
+      tryConnectWS(djangoWsUrl, 'Django').catch(() => scheduleReconnect());
+    } else {
       scheduleReconnect();
-    };
+    }
+  });
+}
 
-    wsConnection.onerror = () => {
-      wsConnection?.close();
-    };
-  } catch {
-    scheduleReconnect();
-  }
+function tryConnectWS(url, label) {
+  return new Promise((resolve, reject) => {
+    try {
+      const ws = new WebSocket(url);
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error(`${label} WS timeout`));
+      }, 3000);
+
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        console.log(`[MindForge] WebSocket connected (${label}: ${url})`);
+        wsConnection = ws;
+        desktopAlive = true;
+        wsReconnectDelay = 1000;
+        resolve();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleWSMessage(data);
+        } catch (err) {
+          console.warn('[MindForge] WebSocket parse error:', err.message);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log(`[MindForge] WebSocket disconnected (${label})`);
+        if (wsConnection === ws) {
+          wsConnection = null;
+          scheduleReconnect();
+        }
+      };
+
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(`${label} WS error`));
+      };
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 function scheduleReconnect() {
   if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
   wsReconnectTimer = setTimeout(() => {
     wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
-    connectWebSocket();
+    if (sessionState.sessionId) {
+      connectWebSocket(sessionState.sessionId);
+    }
   }, wsReconnectDelay);
 }
 
@@ -252,6 +332,7 @@ function handleWSMessage(data) {
     case 'session_status':
       if (data.active) {
         sessionState.active = true;
+        sessionState.sessionId = data.session_id || data.sessionId;
         sessionState.goal = data.goal || '';
         sessionState.score = data.lastScore || 0;
         sessionState.startTime = data.startTime || Date.now();
@@ -259,6 +340,22 @@ function handleWSMessage(data) {
       break;
   }
 }
+
+// ─── External Messaging ───
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message.type === 'START_SESSION') {
+    console.log('[MindForge] Received START_SESSION from Renderer', message.sessionId);
+    sessionState.active = true;
+    sessionState.sessionId = message.sessionId;
+    
+    // Reset tracking for new session
+    resetTracking();
+
+    connectWebSocket(message.sessionId);
+    sendResponse({ ok: true });
+  }
+  return true;
+});
 
 // ─── Tab Communication Helpers ───
 
@@ -359,9 +456,24 @@ async function classifyTab(tabId, url, title) {
     method: result.method,
   }).catch(err => console.warn('[MindForge] History log error:', err.message));
 
-  // Send event to desktop app (non-blocking)
-  sendEventToDesktop(url, extractedContent.title, result.category, result.confidence, result.contentType)
-    .catch(err => console.warn('[MindForge] Desktop event error:', err.message));
+  // Send event to desktop app (non-blocking) via WS if active, else fallback to POST
+  const eventPayload = {
+    type: 'browser_signal',
+    url: url,
+    title: extractedContent.title,
+    category: result.category,
+    confidence: result.confidence,
+    contentType: result.contentType,
+    timestamp: Date.now()
+  };
+
+  if (sessionState.active && wsConnection && wsConnection.readyState === 1) {
+    wsConnection.send(JSON.stringify(eventPayload));
+  } else {
+    // We don't necessarily need to ping if there's no session, but we can try POSTing to Django
+    sendEventToDesktop(url, extractedContent.title, result.category, result.confidence, result.contentType)
+      .catch(err => console.warn('[MindForge] Desktop event error:', err.message));
+  }
 
   // Determine UI action based on classification
   if (!sessionState.active) {
@@ -714,12 +826,18 @@ async function initialize() {
     initKNN([]);
   }
 
-  // Check desktop app status
+  // Check if Electron desktop app is running
+  await checkElectronAlive();
+  console.log('[MindForge] Desktop alive:', desktopAlive);
+
+  // Fetch session status (tries Electron first, then Django)
   await fetchSessionStatus();
   console.log('[MindForge] Session state:', JSON.stringify(sessionState));
 
-  // Connect WebSocket
-  connectWebSocket();
+  // Connect WebSocket (tries Electron first, then Django)
+  if (sessionState.sessionId) {
+    connectWebSocket(sessionState.sessionId);
+  }
 
   // Inject content scripts into tabs that existed before the extension loaded
   await injectContentScriptsIntoExistingTabs();
@@ -737,9 +855,14 @@ console.log('[MindForge] Service worker script loaded (v3.0 — ML-enhanced)');
 
 // Periodic session status check (every 30s) + analytics persistence
 setInterval(async () => {
+  // Refresh desktop alive status
+  await checkElectronAlive();
+  // Refresh session state (Electron-first)
   await fetchSessionStatus();
-  if (!wsConnection || wsConnection.readyState > 1) {
-    connectWebSocket();
+  if (sessionState.active && sessionState.sessionId) {
+    if (!wsConnection || wsConnection.readyState > 1) {
+      connectWebSocket(sessionState.sessionId);
+    }
   }
   // Periodically persist analytics
   if (sessionState.active) {

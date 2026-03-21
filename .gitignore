@@ -114,3 +114,10 @@ release/
 *.asar
 
 CODEBASE_ANALYSIS.md
+
+# Python / Django
+venv/
+env/
+__pycache__/
+*.pyc
+db.sqlite3

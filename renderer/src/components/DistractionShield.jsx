@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
-const WS_URL = 'ws://localhost:39871';
+const DJANGO_API = 'http://localhost:8000/api';
+const DJANGO_WS = 'ws://localhost:8000/ws/session';
 
 export default function DistractionShield() {
   const [alert, setAlert] = useState(null);
@@ -8,16 +9,36 @@ export default function DistractionShield() {
   const wsRef = useRef(null);
   const timerRef = useRef(null);
 
+  const [sessionId, setSessionId] = useState(null);
+
+  // Poll for active session ID from localStorage
   useEffect(() => {
+    const checkSession = () => {
+      const savedId = localStorage.getItem('mindforge_session_id');
+      if (savedId !== sessionId) {
+        setSessionId(savedId);
+      }
+    };
+    checkSession();
+    // Fast local polling since it costs nothing
+    const interval = setInterval(checkSession, 1000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      if (wsRef.current) wsRef.current.close();
+      return;
+    }
     function connect() {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(`${DJANGO_WS}/${sessionId}/`);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'distraction_alert') {
-            setAlert(data);
+          if (data.type === 'distraction_alert' || data.type === 'intervention') {
+            setAlert({ app: data.hostname || data.app || 'Distraction', focusMinutes: 0 });
             setCountdown(10);
           }
         } catch (e) { /* ignore */ }
@@ -28,7 +49,7 @@ export default function DistractionShield() {
     }
     connect();
     return () => { if (wsRef.current) wsRef.current.close(); };
-  }, []);
+  }, [sessionId]);
 
   // Auto-dismiss countdown
   useEffect(() => {

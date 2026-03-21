@@ -1,15 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 
-/* ─── Status Helpers ─── */
-function getStatusDisplay(status, score) {
-  if (status === 'break') return { label: 'On Break', color: 'var(--score-amber)', emoji: '☕', dot: '#f59e0b' };
-  if (status === 'distracted') return { label: 'Distracted', color: 'var(--score-red)', emoji: '😵', dot: '#ef4444' };
-  // Default: focused (also covers neutral)
-  return { label: 'Focused', color: 'var(--score-green)', emoji: '📚', dot: '#10b981' };
+/* ─── Helpers ─── */
+function generateCode() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
 }
 
-/* ─── SVG Icons ─── */
+/* ─── Status Helpers (score-based from File 2 UI, labels from File 1) ─── */
+function getStatusDisplay(status, score) {
+  if (status === 'break') return { label: 'On Break', color: '#f59e0b', emoji: '☕', dot: '#f59e0b' };
+  if (status === 'distracted') return { label: 'Distracted', color: '#ef4444', emoji: '😵', dot: '#ef4444' };
+  return { label: 'Focused', color: '#22c55e', emoji: '📚', dot: '#22c55e' };
+}
+
+/* ─── SVG Icons (from File 1) ─── */
 const CopyIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -31,7 +38,45 @@ const CheckIcon = () => (
   </svg>
 );
 
-/* ─── Member Card ─── */
+/* ─── Shared inline styles (File 2 aesthetic) ─── */
+const INPUT_STYLE = {
+  width: '100%',
+  height: '44px',
+  background: 'transparent',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: '10px',
+  padding: '0 16px',
+  color: '#ffffff',
+  fontSize: '15px',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const BTN_PRIMARY = {
+  width: '100%',
+  height: '44px',
+  background: '#3730a3',
+  color: '#ffffff',
+  border: 'none',
+  borderRadius: '10px',
+  fontSize: '15px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  marginTop: '12px',
+  opacity: 1,
+};
+
+const BTN_PRIMARY_DISABLED = { ...BTN_PRIMARY, opacity: 0.4, cursor: 'not-allowed' };
+
+const CARD_STYLE = {
+  background: '#111418',
+  borderRadius: '16px',
+  padding: '28px 32px 32px',
+  border: '1px solid rgba(255,255,255,0.07)',
+  width: '340px',
+};
+
+/* ─── Member Card (File 2 UI + File 1 reaction logic) ─── */
 function MemberCard({ member, isYou, onReact }) {
   const statusInfo = getStatusDisplay(member.status, member.score);
   const [showReaction, setShowReaction] = useState(null);
@@ -43,67 +88,90 @@ function MemberCard({ member, isYou, onReact }) {
   }
 
   return (
-    <div className="premium-card p-4 relative overflow-hidden transition-all duration-200 hover:scale-[1.01]">
+    <div style={{
+      background: '#111418',
+      border: '1px solid rgba(255,255,255,0.07)',
+      borderRadius: '12px',
+      padding: '14px 20px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      position: 'relative',
+      overflow: 'hidden',
+      transition: 'transform 0.2s',
+    }}>
       {/* Reaction animation */}
       {showReaction && (
-        <div className="absolute inset-0 flex items-center justify-center text-4xl animate-score-enter pointer-events-none z-10">
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', fontSize: '2rem', pointerEvents: 'none', zIndex: 10,
+          animation: 'scoreEnter 0.3s ease-out',
+        }}>
           {showReaction}
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {/* Avatar with status dot */}
-          <div className="relative">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
-              {member.display_name?.[0]?.toUpperCase() || '?'}
-            </div>
-            {/* Status dot */}
-            <div
-              className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
-              style={{ background: statusInfo.dot, borderColor: 'var(--bg-card)' }}
-            />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Avatar with status dot */}
+        <div style={{ position: 'relative' }}>
+          <div style={{
+            width: '36px', height: '36px', borderRadius: '50%',
+            background: '#222', border: '1px solid rgba(255,255,255,0.1)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontWeight: 700, fontSize: '14px',
+          }}>
+            {member.display_name?.[0]?.toUpperCase() || '?'}
           </div>
-          <div>
-            <span className="text-sm font-semibold block" style={{ color: 'var(--text-primary)' }}>
-              {member.display_name}
-              {isYou && <span className="text-[10px] ml-1 text-zinc-500">(You)</span>}
-            </span>
-            <span className="text-xs flex items-center gap-1 font-medium mt-0.5" style={{ color: statusInfo.color }}>
-              {statusInfo.emoji} {statusInfo.label}
-            </span>
-          </div>
+          <div style={{
+            position: 'absolute', bottom: '-2px', right: '-2px',
+            width: '10px', height: '10px', borderRadius: '50%',
+            background: statusInfo.dot, border: '2px solid #111418',
+          }} />
         </div>
 
-        <div className="flex items-center gap-4">
-          {/* Score */}
-          <span className="text-xl font-bold tabular-nums" style={{ color: statusInfo.color }}>
-            {member.score || 0}
-          </span>
-          {/* Reaction buttons */}
-          {!isYou && (
-            <div className="flex gap-1.5">
-              <button
-                onClick={() => handleReact('👍')}
-                className="w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-zinc-800 border border-transparent hover:border-zinc-700"
-              >
-                👍
-              </button>
-              <button
-                onClick={() => handleReact('🔥')}
-                className="w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-zinc-800 border border-transparent hover:border-zinc-700"
-              >
-                🔥
-              </button>
-            </div>
-          )}
+        <div>
+          <div style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>
+            {member.display_name}
+            {isYou && <span style={{ color: '#6b7280', fontSize: '11px', marginLeft: '6px' }}>(You)</span>}
+          </div>
+          <div style={{ color: statusInfo.color, fontSize: '12px', marginTop: '2px' }}>
+            {statusInfo.emoji} {statusInfo.label}
+          </div>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <span style={{ color: statusInfo.color, fontSize: '22px', fontWeight: 700 }}>
+          {member.score || 0}
+        </span>
+        {/* Reaction buttons (File 1 logic) */}
+        {!isYou && (
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {['👍', '🔥'].map(emoji => (
+              <button
+                key={emoji}
+                onClick={() => handleReact(emoji)}
+                style={{
+                  width: '32px', height: '32px', borderRadius: '8px',
+                  background: 'transparent', border: '1px solid transparent',
+                  cursor: 'pointer', fontSize: '16px', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.15s, border-color 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#1e1e1e'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/* ─── Email Invite Modal ─── */
+/* ─── Email Invite Modal (from File 1) ─── */
 function InviteModal({ roomCode, roomName, onClose }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
@@ -120,36 +188,41 @@ function InviteModal({ roomCode, roomName, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}>
-      <div className="premium-card p-6 w-96 animate-slide-up" style={{ background: 'var(--bg-card)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+    <div
+      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, background: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        style={{ ...CARD_STYLE, width: '380px' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: '0 0 4px 0' }}>
           Invite via Email
         </h3>
-        <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        <p style={{ color: '#6b7280', fontSize: '13px', margin: '0 0 20px 0' }}>
           Send the room code to a friend's email
         </p>
 
-        <div className="flex gap-2">
+        <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={e => setEmail(e.target.value)}
             placeholder="friend@email.com"
-            className="flex-1 px-3 py-2.5 rounded-lg text-sm outline-none transition-colors border focus:border-white"
-            style={{
-              background: 'var(--bg-secondary)',
-              borderColor: 'var(--border)',
-              color: 'var(--text-primary)',
-            }}
+            style={{ ...INPUT_STYLE, flex: 1 }}
             autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
           />
           <button
             onClick={handleSend}
             disabled={!email.trim() || sent}
-            className="btn-primary px-4 py-2.5 text-sm flex items-center gap-2 disabled:opacity-50"
+            style={{
+              height: '44px', padding: '0 16px', background: '#3730a3', color: '#fff',
+              border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: 600,
+              cursor: email.trim() && !sent ? 'pointer' : 'not-allowed',
+              opacity: !email.trim() || sent ? 0.5 : 1,
+              display: 'flex', alignItems: 'center', gap: '6px',
+            }}
           >
             {sent ? <><CheckIcon /> Sent!</> : <><MailIcon /> Send</>}
           </button>
@@ -157,10 +230,10 @@ function InviteModal({ roomCode, roomName, onClose }) {
 
         <button
           onClick={onClose}
-          className="mt-3 text-xs w-full text-center py-1.5 rounded transition-colors"
-          style={{ color: 'var(--text-tertiary)' }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+          style={{
+            marginTop: '12px', width: '100%', background: 'transparent',
+            border: 'none', color: '#6b7280', fontSize: '13px', cursor: 'pointer', padding: '6px',
+          }}
         >
           Cancel
         </button>
@@ -186,14 +259,12 @@ export default function FocusRoom() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const pollRef = useRef(null);
 
-  // Auto-fill username from email
+  // Auto-fill username from email (File 1)
   useEffect(() => {
-    if (user?.email) {
-      setUserName(user.email.split('@')[0]);
-    }
+    if (user?.email) setUserName(user.email.split('@')[0]);
   }, [user]);
 
-  // Check for active room on mount
+  // Check for active room on mount (File 1)
   useEffect(() => {
     checkActiveRoom();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -230,15 +301,10 @@ export default function FocusRoom() {
     setError('');
     try {
       const result = await window.mindforge.room.create(inputRoomName.trim(), userName.trim());
-      if (result.error) {
-        setError(result.error);
-        setLoading(false);
-        return;
-      }
+      if (result.error) { setError(result.error); setLoading(false); return; }
       setRoomCode(result.code);
       setRoomName(inputRoomName.trim());
       setInRoom(true);
-      // Fetch members
       const membersResult = await window.mindforge.room.getMembers(result.code);
       setMembers(membersResult?.members || []);
       startPolling(result.code);
@@ -254,11 +320,7 @@ export default function FocusRoom() {
     setError('');
     try {
       const result = await window.mindforge.room.join(inputCode.trim(), userName.trim());
-      if (result.error) {
-        setError(result.error);
-        setLoading(false);
-        return;
-      }
+      if (result.error) { setError(result.error); setLoading(false); return; }
       setRoomCode(inputCode.toUpperCase());
       setRoomName(result.room?.name || 'Focus Room');
       setInRoom(true);
@@ -273,9 +335,7 @@ export default function FocusRoom() {
 
   async function leaveRoom() {
     if (pollRef.current) clearInterval(pollRef.current);
-    try {
-      await window.mindforge.room.leave(roomCode);
-    } catch {}
+    try { await window.mindforge.room.leave(roomCode); } catch {}
     setInRoom(false);
     setRoomCode('');
     setRoomName('');
@@ -291,108 +351,94 @@ export default function FocusRoom() {
   }
 
   function copyLink() {
-    const link = `mindforge://room/${roomCode}`;
     navigator.clipboard.writeText(roomCode);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   }
 
-  /* ─── Lobby View ─── */
+  /* ─── LOBBY VIEW (File 2 UI: side-by-side cards) ─── */
   if (!inRoom) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="max-w-sm w-full space-y-6">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
-              Focus Room
-            </h2>
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              Study together in real-time. No chat — just focus.
-            </p>
+      <div style={{
+        width: '100%', minHeight: 'calc(100vh - 60px)', background: '#000000',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }}>
+        <h1 style={{ color: '#ffffff', fontSize: '36px', fontWeight: 500, margin: '0 0 56px 0', letterSpacing: '-0.5px' }}>
+          Focus <span style={{ color: '#9ca3af', fontWeight: 300 }}>Room</span>
+        </h1>
+
+        {/* Error (File 1) */}
+        {error && (
+          <div style={{
+            marginBottom: '24px', padding: '10px 16px', borderRadius: '10px',
+            background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+            border: '1px solid rgba(239,68,68,0.2)', fontSize: '13px', fontWeight: 500,
+          }}>
+            {error}
           </div>
+        )}
 
-          {/* Error */}
-          {error && (
-            <div className="px-4 py-2.5 rounded-lg text-xs font-medium border animate-slide-up"
-              style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--score-red)', borderColor: 'rgba(239,68,68,0.2)' }}>
-              {error}
+        {/* Two cards side by side (File 2 UI) */}
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: '0' }}>
+
+          {/* LEFT: Name + Room Name + Create */}
+          <div style={CARD_STYLE}>
+            <div style={{ fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', color: '#6b7280', marginBottom: '16px', fontWeight: 600 }}>
+              YOUR NAME
             </div>
-          )}
-
-          {/* Name input */}
-          <div>
-            <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-              Your Name
-            </label>
             <input
               type="text"
               value={userName}
-              onChange={(e) => setUserName(e.target.value)}
+              onChange={e => setUserName(e.target.value)}
               placeholder="Enter your name"
-              className="w-full px-4 py-3 rounded-lg text-sm outline-none transition-colors border focus:border-white"
-              style={{
-                background: 'var(--bg-secondary)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)',
-              }}
+              style={INPUT_STYLE}
             />
-          </div>
-
-          {/* Room name + create */}
-          <div>
-            <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-              Room Name
-            </label>
+            <div style={{ fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', color: '#6b7280', margin: '16px 0 10px', fontWeight: 600 }}>
+              ROOM NAME
+            </div>
             <input
               type="text"
               value={inputRoomName}
-              onChange={(e) => setInputRoomName(e.target.value)}
+              onChange={e => setInputRoomName(e.target.value)}
               placeholder="e.g. Study Squad, Final Exam Prep"
-              className="w-full px-4 py-3 rounded-lg text-sm outline-none transition-colors border focus:border-white"
-              style={{
-                background: 'var(--bg-secondary)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)',
-              }}
+              style={INPUT_STYLE}
+              onKeyDown={e => e.key === 'Enter' && createRoom()}
             />
+            <button
+              onClick={createRoom}
+              disabled={!userName.trim() || !inputRoomName.trim() || loading}
+              style={!userName.trim() || !inputRoomName.trim() || loading ? BTN_PRIMARY_DISABLED : BTN_PRIMARY}
+            >
+              {loading ? 'Creating…' : 'Create New Room'}
+            </button>
           </div>
 
-          <button
-            onClick={createRoom}
-            disabled={!userName.trim() || !inputRoomName.trim() || loading}
-            className="btn-primary w-full py-3 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {loading ? <div className="auth-spinner" /> : 'Create New Room'}
-          </button>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
-            <span className="text-xs font-medium uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>or join</span>
-            <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+          {/* OR divider */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '60px', flexShrink: 0 }}>
+            <span style={{ color: '#6b7280', fontSize: '13px', fontWeight: 500 }}>OR</span>
           </div>
 
-          {/* Join room */}
-          <div className="flex gap-2">
+          {/* RIGHT: Room Code + Join */}
+          <div style={CARD_STYLE}>
+            <div style={{ fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', color: '#6b7280', marginBottom: '16px', fontWeight: 600 }}>
+              ROOM CODE
+            </div>
             <input
               type="text"
               value={inputCode}
-              onChange={(e) => setInputCode(e.target.value.toUpperCase())}
-              maxLength={6}
+              onChange={e => setInputCode(e.target.value.toUpperCase())}
               placeholder="ROOM CODE"
-              className="flex-1 px-4 py-3 rounded-lg text-sm outline-none text-center tracking-widest font-mono uppercase transition-colors border focus:border-white"
-              style={{
-                background: 'var(--bg-secondary)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)',
-              }}
+              maxLength={6}
+              style={{ ...INPUT_STYLE, letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}
+              onKeyDown={e => e.key === 'Enter' && joinRoom()}
             />
             <button
               onClick={joinRoom}
               disabled={!userName.trim() || inputCode.length < 6 || loading}
-              className="btn-secondary px-6 py-3 text-sm disabled:opacity-50"
+              style={!userName.trim() || inputCode.length < 6 || loading ? BTN_PRIMARY_DISABLED : BTN_PRIMARY}
             >
-              Join
+              {loading ? 'Joining…' : 'Join'}
             </button>
           </div>
         </div>
@@ -400,100 +446,83 @@ export default function FocusRoom() {
     );
   }
 
-  /* ─── In-Room View ─── */
+  /* ─── IN-ROOM VIEW (File 2 UI + File 1 functionality) ─── */
   const currentUserId = user?.id;
 
   return (
-    <div className="h-full overflow-y-auto pr-2 pb-6" style={{ scrollbarGutter: 'stable' }}>
-      {/* Room header */}
-      <div className="flex items-center justify-between mb-6">
+    <div style={{
+      width: '100%', minHeight: 'calc(100vh - 60px)', background: '#000000',
+      padding: '48px', boxSizing: 'border-box',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      overflowY: 'auto',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
         <div>
-          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-            {roomName}
-          </h2>
-          <div className="flex items-center gap-2 mt-1">
-            <span
-              className="px-2 py-0.5 rounded text-[11px] font-mono font-bold tracking-widest border"
-              style={{
-                background: 'var(--bg-secondary)',
-                color: 'var(--text-primary)',
-                borderColor: 'var(--border)'
-              }}
-            >
+          <h2 style={{ color: '#ffffff', fontSize: '24px', fontWeight: 700, margin: '0 0 4px 0' }}>{roomName}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{
+              background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '6px', padding: '2px 10px', color: '#ffffff',
+              fontSize: '13px', fontFamily: 'monospace', letterSpacing: '3px',
+            }}>
               {roomCode}
             </span>
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+            <span style={{ color: '#6b7280', fontSize: '13px' }}>
               {members.length} Member{members.length !== 1 ? 's' : ''}
             </span>
           </div>
         </div>
         <button
           onClick={leaveRoom}
-          className="btn-secondary px-4 py-2 text-xs"
+          style={{
+            background: '#1a1a1a', color: '#9ca3af', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '8px', padding: '8px 16px', fontSize: '13px', cursor: 'pointer',
+          }}
         >
           Leave Room
         </button>
       </div>
 
-      {/* Share & Invite Bar */}
-      <div className="premium-card p-4 mb-6">
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-tertiary)' }}>
+      {/* Share Bar (File 1 logic, File 2 aesthetic) */}
+      <div style={{ ...CARD_STYLE, width: '100%', maxWidth: '600px', marginBottom: '28px', padding: '16px 20px' }}>
+        <p style={{ fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', color: '#6b7280', fontWeight: 600, margin: '0 0 12px 0' }}>
           Share This Room
         </p>
-        <div className="flex gap-2 flex-wrap">
-          {/* Copy Code */}
-          <button
-            onClick={copyCode}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border"
-            style={{
-              background: copiedCode ? 'rgba(16,185,129,0.1)' : 'var(--bg-secondary)',
-              borderColor: copiedCode ? 'rgba(16,185,129,0.3)' : 'var(--border)',
-              color: copiedCode ? 'var(--score-green)' : 'var(--text-primary)',
-            }}
-          >
-            {copiedCode ? <><CheckIcon /> Copied!</> : <><CopyIcon /> Copy Code</>}
-          </button>
-
-          {/* Copy Invite Link */}
-          <button
-            onClick={copyLink}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border"
-            style={{
-              background: copiedLink ? 'rgba(16,185,129,0.1)' : 'var(--bg-secondary)',
-              borderColor: copiedLink ? 'rgba(16,185,129,0.3)' : 'var(--border)',
-              color: copiedLink ? 'var(--score-green)' : 'var(--text-primary)',
-            }}
-          >
-            {copiedLink ? <><CheckIcon /> Copied!</> : <><LinkIcon /> Copy Invite Link</>}
-          </button>
-
-          {/* Invite via Email */}
-          <button
-            onClick={() => setShowInviteModal(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border"
-            style={{
-              background: 'var(--bg-secondary)',
-              borderColor: 'var(--border)',
-              color: 'var(--text-primary)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-active)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
-          >
-            <MailIcon /> Invite via Email
-          </button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {[
+            { label: copiedCode ? 'Copied!' : 'Copy Code', icon: copiedCode ? <CheckIcon /> : <CopyIcon />, action: copyCode, copied: copiedCode },
+            { label: copiedLink ? 'Copied!' : 'Copy Invite Link', icon: copiedLink ? <CheckIcon /> : <LinkIcon />, action: copyLink, copied: copiedLink },
+            { label: 'Invite via Email', icon: <MailIcon />, action: () => setShowInviteModal(true), copied: false },
+          ].map(({ label, icon, action, copied }) => (
+            <button
+              key={label}
+              onClick={action}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
+                cursor: 'pointer', transition: 'all 0.15s',
+                background: copied ? 'rgba(34,197,94,0.1)' : '#1a1a1a',
+                border: `1px solid ${copied ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.08)'}`,
+                color: copied ? '#22c55e' : '#d1d5db',
+              }}
+            >
+              {icon} {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Members */}
-      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+      {/* Members list */}
+      <h3 style={{ color: '#ffffff', fontSize: '14px', fontWeight: 600, margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
         Members
       </h3>
-      <div className="space-y-3">
-        {members.map((m) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '600px' }}>
+        {members.map(m => (
           <MemberCard
             key={m.id || m.user_id}
             member={m}
@@ -502,24 +531,24 @@ export default function FocusRoom() {
           />
         ))}
         {members.length === 0 && (
-          <div className="premium-card p-6 text-center">
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          <div style={{ ...CARD_STYLE, textAlign: 'center', padding: '32px' }}>
+            <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>
               No members yet. Share the room code to invite friends!
             </p>
           </div>
         )}
       </div>
 
-      {/* ─── Leaderboard ─── */}
+      {/* Leaderboard (File 1 logic, File 2 aesthetic) */}
       {members.length > 1 && (
-        <div className="mt-8">
-          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+        <div style={{ marginTop: '40px', maxWidth: '600px' }}>
+          <h3 style={{ color: '#ffffff', fontSize: '14px', fontWeight: 600, margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
             </svg>
             Leaderboard
           </h3>
-          <div className="premium-card overflow-hidden">
+          <div style={{ ...CARD_STYLE, width: '100%', padding: '0', overflow: 'hidden' }}>
             {[...members]
               .sort((a, b) => (b.score || 0) - (a.score || 0))
               .map((m, i) => {
@@ -528,34 +557,32 @@ export default function FocusRoom() {
                 const barWidth = Math.max(10, m.score || 0);
                 const statusInfo = getStatusDisplay(m.status, m.score);
                 const isYou = m.user_id === currentUserId;
-
                 return (
                   <div
                     key={m.id || m.user_id}
-                    className={`flex items-center gap-3 px-4 py-3 transition-colors ${i > 0 ? 'border-t' : ''}`}
                     style={{
-                      borderColor: 'var(--border)',
-                      background: isYou ? 'rgba(255,255,255,0.03)' : 'transparent',
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '12px 20px',
+                      borderTop: i > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                      background: isYou ? 'rgba(255,255,255,0.02)' : 'transparent',
                     }}
                   >
-                    <span className="text-base w-7 text-center">{medal}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0 w-28">
-                      {/* Status dot */}
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: statusInfo.dot }} />
-                      <span
-                        className="text-sm font-semibold truncate"
-                        style={{ color: isYou ? 'var(--accent-primary)' : 'var(--text-primary)' }}
-                      >
-                        {m.display_name} {isYou && <span className="text-[10px] text-zinc-500">(You)</span>}
+                    <span style={{ fontSize: '16px', width: '28px', textAlign: 'center', flexShrink: 0 }}>{medal}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '120px', flexShrink: 0 }}>
+                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: statusInfo.dot, flexShrink: 0 }} />
+                      <span style={{ color: isYou ? '#818cf8' : '#ffffff', fontSize: '14px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {m.display_name}
+                        {isYou && <span style={{ color: '#6b7280', fontSize: '10px', marginLeft: '4px' }}>(You)</span>}
                       </span>
                     </div>
-                    <div className="flex-1 h-5 rounded-sm overflow-hidden" style={{ background: 'var(--bg-secondary)' }}>
-                      <div
-                        className="h-full rounded-sm transition-all duration-700 ease-out"
-                        style={{ width: `${barWidth}%`, background: statusInfo.color, opacity: 0.85 }}
-                      />
+                    <div style={{ flex: 1, height: '18px', borderRadius: '4px', overflow: 'hidden', background: '#1a1a1a' }}>
+                      <div style={{
+                        height: '100%', borderRadius: '4px',
+                        width: `${barWidth}%`, background: statusInfo.color,
+                        opacity: 0.85, transition: 'width 0.7s ease-out',
+                      }} />
                     </div>
-                    <span className="text-sm font-bold tabular-nums w-8 text-right" style={{ color: statusInfo.color }}>
+                    <span style={{ color: statusInfo.color, fontSize: '14px', fontWeight: 700, width: '32px', textAlign: 'right' }}>
                       {m.score || 0}
                     </span>
                   </div>
@@ -565,7 +592,7 @@ export default function FocusRoom() {
         </div>
       )}
 
-      {/* Email Invite Modal */}
+      {/* Email Invite Modal (File 1) */}
       {showInviteModal && (
         <InviteModal
           roomCode={roomCode}

@@ -6,6 +6,7 @@ const { initDB, setAuthSession, createRoom, getRoomByCode, joinRoom, leaveRoom, 
 const { initAuth, signUp, signIn, signOut, getUser, getSession, onAuthStateChange } = require('./core/auth');
 const { startServer, broadcast } = require('./core/server');
 const { startWatcher } = require('./core/watcher');
+const { startDjango, stopDjango } = require('./core/djangoHandler');
 
 let mainWindow;
 
@@ -168,6 +169,18 @@ app.whenReady().then(async () => {
   // Start system watcher
   await startWatcher(broadcast);
 
+  // Start Django backend
+  try {
+    await startDjango();
+  } catch (err) {
+    dialog.showErrorBox(
+      'MindForge — Backend Error',
+      `Could not start or connect to the Django server.\n\n${err.message}`
+    );
+    app.quit();
+    return;
+  }
+
   // Create main window
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -186,7 +199,28 @@ app.whenReady().then(async () => {
 
   // Dev: load Vite dev server. Prod: load built files
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    let lanIp = 'localhost';
+    outer: for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('192.168.137')) {
+          lanIp = iface.address;
+          break outer;
+        }
+      }
+    }
+    // Fallback if only hotspot exists
+    if (lanIp === 'localhost') {
+       for (const name of Object.keys(interfaces)) {
+         for (const iface of interfaces[name]) {
+           if (iface.family === 'IPv4' && !iface.internal) lanIp = iface.address;
+         }
+       }
+    }
+    
+    console.log(`[Electron] Loading UI from http://${lanIp}:5173`);
+    mainWindow.loadURL(`http://${lanIp}:5173`);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'dist', 'index.html'));
@@ -198,7 +232,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  stopDjango();
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', () => {
+  stopDjango();
 });
 
 app.on('activate', () => {

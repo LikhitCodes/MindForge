@@ -13,7 +13,11 @@ MindForge is a premium, minimalist desktop application designed to help students
 - **Habit Tracker**: Logs daily habits (reading, meditation, focus sessions) and calculates your current streak.
 - **Focus Rooms & Leaderboard**: Multiplayer virtual rooms to study alongside others, featuring real-time online presence, typing indicators, emojis, and a leaderboard.
 - **In-Memory Session Tracking**: Total privacy and zero lag. Tracking only happens when you start a session, keeping data locally in RAM until the session ends.
-- **Focus Interventions**: Detects "focus spirals" (rapid drops in score) and suggests AI-driven interventions using the Llama-3.1 model via Groq.
+- **Focus Interventions**: Detects "focus spirals" (rapid drops in score) and suggests interventions.
+- **Deep Work Ramp**: Tracks your daily deep work minutes against your goals.
+- **Habit Tracker**: Logs daily habits like reading, meditation, and focus sessions, calculating your current streak.
+- **Focus Rooms**: Multiplayer virtual rooms where you can study alongside others and react with emojis.
+- **Chrome Extension integration**: Syncs browser tab categories to strictly monitor digital distractions.
 
 ## 🛠️ Tech Stack
 - **Desktop Engine**: Electron + Node.js
@@ -109,6 +113,9 @@ npm run seed
 ### 5. Start the App
 Run the Vite development server and launch the Electron app concurrently.
 ```bash
+cd ../mindforge
+npm install
+cd renderer && npm install && cd ..
 npm start
 ```
 

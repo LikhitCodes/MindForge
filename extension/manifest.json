@@ -15,8 +15,15 @@
 
   "host_permissions": [
     "http://localhost:39871/*",
+    "http://localhost:8000/*",
     "<all_urls>"
   ],
+
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:5173/*"
+    ]
+  },
 
   "background": {
     "service_worker": "background.js",
