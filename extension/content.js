@@ -473,3 +473,65 @@ if (window.location.hostname.includes('youtube.com')) {
     }
   });
 }
+
+// ─── Generic SPA Navigation Handler ───
+// Catches pushState / replaceState and popstate events on ANY SPA site
+// (Spotify, ChatGPT, Reddit, etc.) so content gets re-extracted when
+// the user navigates without a full page reload.
+
+(function setupSPANavigationHandler() {
+  // Don't double-up on YouTube (it has its own handler above)
+  if (window.location.hostname.includes('youtube.com')) return;
+
+  let lastUrl = window.location.href;
+
+  async function onSPANavigate() {
+    const currentUrl = window.location.href;
+    if (currentUrl === lastUrl) return;
+    lastUrl = currentUrl;
+
+    console.log('[MindForge] SPA navigation detected:', currentUrl);
+
+    // Delay to let the new content render
+    await new Promise(r => setTimeout(r, 2000));
+
+    try {
+      let extractedContent;
+      if (typeof MindForgeExtractor !== 'undefined' && MindForgeExtractor.extractPageContent) {
+        extractedContent = await MindForgeExtractor.extractPageContent();
+      } else {
+        extractedContent = {
+          title: document.title,
+          url: window.location.href,
+          hostname: window.location.hostname,
+          content: document.title,
+          extractionMethod: 'basic',
+        };
+      }
+      chrome.runtime.sendMessage({
+        type: 'CONTENT_EXTRACTED',
+        data: extractedContent,
+      }).catch(() => {});
+    } catch (err) {
+      console.log('[MindForge] SPA re-extract error:', err.message);
+    }
+  }
+
+  // Intercept History.pushState and replaceState
+  const originalPush = history.pushState;
+  const originalReplace = history.replaceState;
+
+  history.pushState = function (...args) {
+    originalPush.apply(this, args);
+    onSPANavigate();
+  };
+
+  history.replaceState = function (...args) {
+    originalReplace.apply(this, args);
+    onSPANavigate();
+  };
+
+  // Also catch browser back/forward
+  window.addEventListener('popstate', () => onSPANavigate());
+})();
+

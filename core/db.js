@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 
 let supabase = null;
+let currentUserId = null;
 
 /**
  * Initialize Supabase client
@@ -17,6 +18,39 @@ function initDB() {
   supabase = createClient(url, key);
   console.log('[DB] Supabase client initialized');
   return true;
+}
+
+/**
+ * Re-initialize Supabase client with authenticated session.
+ * This makes RLS work — the JWT carries the user's uid.
+ */
+function setAuthSession(accessToken, refreshToken) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+
+  supabase = createClient(url, key, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
+
+  // Decode user ID from JWT payload
+  try {
+    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString());
+    currentUserId = payload.sub || null;
+    console.log(`[DB] Auth session set for user: ${currentUserId}`);
+  } catch (e) {
+    console.warn('[DB] Could not decode JWT:', e.message);
+  }
+}
+
+/**
+ * Get the current authenticated user's ID
+ */
+function getUserId() {
+  return currentUserId;
 }
 
 /**
@@ -37,6 +71,7 @@ async function insertEvent(source, appName, url, category, isIdle = false) {
     url: url || null,
     category: category || 'neutral',
     is_idle: isIdle,
+    user_id: currentUserId,
   });
   if (error) console.error('[DB] insertEvent error:', error.message);
 }
@@ -66,6 +101,7 @@ async function insertScore(score) {
   const { error } = await supabase.from('scores').insert({
     timestamp: Date.now(),
     score,
+    user_id: currentUserId,
   });
   if (error) console.error('[DB] insertScore error:', error.message);
 }
@@ -354,6 +390,104 @@ async function getStudyHabits() {
     totalSessions: (sessions || []).length,
   };
 }
+// ═══════════════════════════════════════
+//  SESSION SITES FUNCTIONS (Extension Browser Data)
+// ═══════════════════════════════════════
+
+/**
+ * Batch insert per-site browser analytics linked to a session.
+ * Called when a session ends, from the browserTabs accumulator.
+ * @param {string} sessionId
+ * @param {Array} sites - [{hostname, category, contentType, active_seconds, visits}]
+ * @param {string} date - YYYY-MM-DD
+ */
+async function insertSessionSites(sessionId, sites, date) {
+  if (!supabase || !sessionId || !sites || sites.length === 0) return;
+
+  const rows = sites.map(site => ({
+    session_id: sessionId,
+    hostname: site.hostname,
+    category: site.category || 'neutral',
+    content_type: site.contentType || site.content_type || 'text',
+    active_seconds: site.active_seconds || 0,
+    visits: site.visits || 1,
+    date: date || new Date().toISOString().slice(0, 10),
+    timestamp: Date.now(),
+  }));
+
+  const { error } = await supabase.from('session_sites').insert(rows);
+  if (error) console.error('[DB] insertSessionSites error:', error.message);
+  else console.log(`[DB] Inserted ${rows.length} session_sites rows for session ${sessionId.slice(0, 8)}`);
+}
+
+/**
+ * Get per-site analytics aggregated across all sessions for the last N days.
+ * Returns sites sorted by total time spent (descending) — for "Top Time Sinks" chart.
+ * @param {number} days
+ * @param {string} [category] - optional filter: 'productive' | 'distraction' | 'neutral'
+ */
+async function getPerSiteAnalytics(days = 7, category = null) {
+  if (!supabase) return [];
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  let query = supabase
+    .from('session_sites')
+    .select('hostname, category, content_type, active_seconds, visits')
+    .gte('date', since);
+
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[DB] getPerSiteAnalytics error:', error.message);
+    return [];
+  }
+
+  // Aggregate by hostname AND category
+  const siteMap = {};
+  (data || []).forEach(row => {
+    const key = `${row.hostname}|${row.category}`;
+    if (!siteMap[key]) {
+      siteMap[key] = {
+        hostname: row.hostname,
+        category: row.category,
+        content_type: row.content_type,
+        total_seconds: 0,
+        total_visits: 0,
+      };
+    }
+    siteMap[key].total_seconds += row.active_seconds || 0;
+    siteMap[key].total_visits += row.visits || 1;
+    // Update content type to most recent
+    siteMap[key].content_type = row.content_type;
+  });
+
+  return Object.values(siteMap).sort((a, b) => b.total_seconds - a.total_seconds);
+}
+
+/**
+ * Get per-site breakdown for a specific session.
+ * @param {string} sessionId
+ */
+async function getSessionSites(sessionId) {
+  if (!supabase || !sessionId) return [];
+
+  const { data, error } = await supabase
+    .from('session_sites')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('active_seconds', { ascending: false });
+
+  if (error) {
+    console.error('[DB] getSessionSites error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
 /**
  * Get analytics data for a given range (week or month)
  */
@@ -473,9 +607,148 @@ async function getTodaySummary() {
   };
 }
 
+// ═══════════════════════════════════════
+//  FOCUS ROOM FUNCTIONS
+// ═══════════════════════════════════════
+
+/**
+ * Create a focus room
+ */
+async function createRoom(roomId, name) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { data, error } = await supabase.from('focus_rooms').insert({
+    id: roomId,
+    name,
+    created_by: currentUserId,
+    created_at: Date.now(),
+  }).select().single();
+
+  if (error) {
+    console.error('[DB] createRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { data };
+}
+
+/**
+ * Get room by code
+ */
+async function getRoomByCode(code) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('focus_rooms')
+    .select('*')
+    .eq('id', code)
+    .single();
+
+  if (error) {
+    if (error.code !== 'PGRST116') console.error('[DB] getRoomByCode error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Join a room
+ */
+async function joinRoom(roomId, displayName) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { data, error } = await supabase.from('focus_room_members').upsert({
+    room_id: roomId,
+    user_id: currentUserId,
+    display_name: displayName,
+    status: 'focused',
+    score: 0,
+    joined_at: Date.now(),
+  }, { onConflict: 'room_id,user_id' }).select().single();
+
+  if (error) {
+    console.error('[DB] joinRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { data };
+}
+
+/**
+ * Leave a room
+ */
+async function leaveRoom(roomId) {
+  if (!supabase) return { error: 'DB not ready' };
+
+  const { error } = await supabase
+    .from('focus_room_members')
+    .delete()
+    .eq('room_id', roomId)
+    .eq('user_id', currentUserId);
+
+  if (error) {
+    console.error('[DB] leaveRoom error:', error.message);
+    return { error: error.message };
+  }
+  return { ok: true };
+}
+
+/**
+ * Get all members of a room
+ */
+async function getRoomMembers(roomId) {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('focus_room_members')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('joined_at', { ascending: true });
+
+  if (error) {
+    console.error('[DB] getRoomMembers error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Update a member's focus status and score
+ */
+async function updateMemberStatus(roomId, status, score) {
+  if (!supabase || !currentUserId) return;
+
+  const { error } = await supabase
+    .from('focus_room_members')
+    .update({ status, score })
+    .eq('room_id', roomId)
+    .eq('user_id', currentUserId);
+
+  if (error) {
+    console.error('[DB] updateMemberStatus error:', error.message);
+  }
+}
+
+/**
+ * Get the room the current user is in (if any)
+ */
+async function getUserActiveRoom() {
+  if (!supabase || !currentUserId) return null;
+
+  const { data, error } = await supabase
+    .from('focus_room_members')
+    .select('room_id')
+    .eq('user_id', currentUserId)
+    .limit(1)
+    .single();
+
+  if (error) return null;
+  return data?.room_id || null;
+}
+
 module.exports = {
   initDB,
   getDB,
+  setAuthSession,
+  getUserId,
   insertEvent,
   getRecentEvents,
   insertScore,
@@ -490,4 +763,15 @@ module.exports = {
   getStudyHabits,
   getAnalyticsData,
   getTodaySummary,
+  insertSessionSites,
+  getPerSiteAnalytics,
+  getSessionSites,
+  // Focus Rooms
+  createRoom,
+  getRoomByCode,
+  joinRoom,
+  leaveRoom,
+  getRoomMembers,
+  updateMemberStatus,
+  getUserActiveRoom,
 };

@@ -172,6 +172,42 @@ export const TRAINING_DATA = [
   { url: 'geeksforgeeks.org/data-structures', title: 'Data Structures - GeeksforGeeks', snippet: 'data structures array linked list tree graph stack queue heap hash table algorithms implementation', category: 'productive', contentType: 'text' },
   { url: 'hackerrank.com/challenges', title: 'HackerRank Challenges', snippet: 'coding challenges practice algorithms problem solving interview preparation programming competitions skills', category: 'productive', contentType: 'interactive' },
   { url: 'codeforces.com/problemset', title: 'Codeforces Problemset', snippet: 'competitive programming problems algorithms mathematics implementation data structures contest practice difficulty', category: 'productive', contentType: 'interactive' },
+
+  // ═══════════════════════════════════════
+  //  PRODUCTIVE — Podcasts & Focus Audio
+  // ═══════════════════════════════════════
+  { url: 'open.spotify.com/show/lexfridman', title: 'Lex Fridman Podcast', snippet: 'podcast artificial intelligence technology science research deep conversations engineering mathematics philosophy', category: 'productive', contentType: 'audio' },
+  { url: 'open.spotify.com/show/hubermanlab', title: 'Huberman Lab Podcast', snippet: 'neuroscience health science research brain optimization focus sleep productivity learning protocols evidence', category: 'productive', contentType: 'audio' },
+  { url: 'podcasts.apple.com/programming', title: 'Syntax - Web Dev Podcast', snippet: 'web development podcast javascript react css nodejs frameworks tools tips best practices coding', category: 'productive', contentType: 'audio' },
+  { url: 'open.spotify.com/playlist/focusmusic', title: 'Deep Focus Study Music', snippet: 'focus music study concentration deep work instrumental ambient background productivity white noise', category: 'productive', contentType: 'audio' },
+  { url: 'youtube.com/watch?v=focus1', title: 'Brown Noise for Studying - 10 Hours', snippet: 'brown noise study focus concentration ambient sound background noise productivity deep work brain calm', category: 'productive', contentType: 'audio' },
+  { url: 'youtube.com/watch?v=focus2', title: 'Study With Me 3 Hour Pomodoro Timer', snippet: 'study with me pomodoro timer focus music real time motivation library productivity progress session', category: 'productive', contentType: 'video' },
+
+  // ═══════════════════════════════════════
+  //  PRODUCTIVE — Generic Blogs & Articles
+  // ═══════════════════════════════════════
+  { url: 'towardsdatascience.com/transformers', title: 'Understanding Transformers in Deep Learning', snippet: 'transformers architecture attention mechanism self attention deep learning models nlp computer vision explained', category: 'productive', contentType: 'text' },
+  { url: 'blog.pragmaticengineer.com', title: 'The Pragmatic Engineer Blog', snippet: 'software engineering career advice system design architecture tech industry best practices senior engineer', category: 'productive', contentType: 'text' },
+  { url: 'martinfowler.com/articles/microservices', title: 'Microservices - Martin Fowler', snippet: 'microservices architecture distributed systems design patterns software engineering deployment services api', category: 'productive', contentType: 'text' },
+  { url: 'overleaf.com/project', title: 'Overleaf - LaTeX Editor', snippet: 'latex editor academic writing paper thesis document scientific publication formatting mathematics equations', category: 'productive', contentType: 'interactive' },
+  { url: 'gemini.google.com/app', title: 'Google Gemini AI', snippet: 'ai assistant chatbot help question answer reasoning analysis writing code generation research', category: 'productive', contentType: 'interactive' },
+
+  // ═══════════════════════════════════════
+  //  DISTRACTION — Gossip, Lifestyle, Viral
+  // ═══════════════════════════════════════
+  { url: 'reddit.com/r/relationship_advice', title: 'r/relationship_advice - Reddit', snippet: 'relationship advice dating love breakup cheating drama personal stories emotional vent help', category: 'distraction', contentType: 'text' },
+  { url: 'reddit.com/r/AmItheAsshole', title: 'r/AmItheAsshole - Reddit', snippet: 'aita judgment stories conflict drama interpersonal social dilemma verdict vote personal', category: 'distraction', contentType: 'text' },
+  { url: 'youtube.com/watch?v=ent9', title: 'I Tried Every Fast Food Chain Ranked', snippet: 'food review taste test ranking fast food challenge vlog entertainment lifestyle trying eating', category: 'distraction', contentType: 'video' },
+  { url: 'youtube.com/watch?v=ent10', title: 'GRWM for the Concert + Vlog', snippet: 'get ready with me grwm outfit fashion concert vlog lifestyle beauty makeup haul routine', category: 'distraction', contentType: 'video' },
+  { url: 'open.spotify.com/playlist/partymix', title: 'Ultimate Party Mix 2026', snippet: 'party mix dance hits club music top charts trending popular songs dj remix bass drop', category: 'distraction', contentType: 'audio' },
+
+  // ═══════════════════════════════════════
+  //  NEUTRAL — Generic tools & mixed
+  // ═══════════════════════════════════════
+  { url: 'open.spotify.com/browse', title: 'Spotify Browse', snippet: 'browse discover music podcasts new releases charts genres playlists recommendations for you explore', category: 'neutral', contentType: 'audio' },
+  { url: 'translate.google.com', title: 'Google Translate', snippet: 'translation language text document website translate convert multilingual communication tool utility', category: 'neutral', contentType: 'interactive' },
+  { url: 'canva.com/design', title: 'Canva Design', snippet: 'design graphic template presentation poster social media creative visual drag drop editor layout', category: 'neutral', contentType: 'interactive' },
+  { url: 'figma.com/file', title: 'Figma Design File', snippet: 'design ui ux interface prototype wireframe components layout collaboration creative vector graphics', category: 'neutral', contentType: 'interactive' },
 ];
 
 // Pre-computed vocabulary: the most discriminative tokens across the training data.

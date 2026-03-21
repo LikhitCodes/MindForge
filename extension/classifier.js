@@ -1,12 +1,13 @@
-// MindForge — Classification Engine v3.0
+// MindForge — Classification Engine v4.0
 // Runs in the service worker (background.js context).
-// 4-stage classification pipeline:
+// 5-stage classification pipeline:
 //   1. Domain tier check (instant, goal-independent)
 //   2. KNN personalized check (goal-contextual, if ≥5 feedback examples)
 //   3. Naive Bayes ML classifier (general text classification)
 //   4. Keyword fallback (only if ML confidence < 0.4)
+//   5. Goal-relevance adjustment (session-goal-aware override)
 
-import { extractFeatures, detectContentType, initFeatures } from './ml/featureExtractor.js';
+import { extractFeatures, detectContentType, initFeatures, computeGoalRelevance } from './ml/featureExtractor.js';
 import { trainNaiveBayes, classifyNaiveBayes } from './ml/naiveBayes.js';
 import { classifyKNN, isKNNReady } from './ml/knnClassifier.js';
 
@@ -15,7 +16,7 @@ import { classifyKNN, isKNNReady } from './ml/knnClassifier.js';
 const TIER1_DISTRACTIONS = [
   'instagram.com', 'twitter.com', 'x.com', 'netflix.com', 'tiktok.com',
   'facebook.com', 'snapchat.com', 'twitch.tv', 'pinterest.com',
-  'tumblr.com', '9gag.com',
+  'tumblr.com', '9gag.com', 'whatsapp.com',
   // NOTE: YouTube + Reddit are NOT here — they are mixed-content sites.
   // Classification is determined by ML analysis of actual page content
   // (video title, subreddit, post topic).
@@ -50,6 +51,11 @@ const DISTRACTION_SIGNALS = [
   'prank', 'reaction', 'roast', 'rant', 'cringe', 'fail',
   'unboxing', 'haul', 'mukbang', 'asmr', 'compilation',
   "we're so back", 'hot take', 'beef', 'exposed',
+  'clickbait', 'subscribe', 'giveaway', 'scandal',
+  'binge watch', 'episode recap', 'fan theory', 'fandom',
+  'dating', 'relationship drama', 'party mix', 'top hits',
+  'satisfying', 'oddly satisfying', 'try not to laugh',
+  'gone wrong', 'pov', 'storytime', 'grwm',
 ];
 
 const PRODUCTIVE_SIGNALS = [
@@ -61,9 +67,18 @@ const PRODUCTIVE_SIGNALS = [
   'textbook', 'syllabus', 'chapter', 'exam', 'notes', 'education',
   'university', 'college', 'academic', 'fundamentals', 'concepts',
   'introduction', 'overview', 'explained', 'deep dive',
+  'workshop', 'seminar', 'conference', 'masterclass',
+  'problem solving', 'mathematics', 'physics', 'chemistry',
+  'biology', 'statistics', 'machine learning', 'artificial intelligence',
+  'neural network', 'data science', 'computer science',
+  'open source', 'repository', 'pull request', 'code review',
+  'documentation', 'specification', 'technical', 'implementation',
+  'focus music', 'study playlist', 'concentration', 'deep work',
+  'white noise', 'study session', 'revision', 'thesis',
+  'educational podcast', 'tech talk',
 ];
 
-function keywordClassify(extractedContent) {
+function keywordClassify(extractedContent, sessionGoal = '') {
   const title = (extractedContent.title || '').toLowerCase();
   const content = (extractedContent.content || '').toLowerCase();
   const url = (extractedContent.url || '').toLowerCase();
@@ -71,20 +86,39 @@ function keywordClassify(extractedContent) {
 
   let distractionScore = 0;
   for (const kw of DISTRACTION_SIGNALS) {
-    if (allText.includes(kw)) distractionScore++;
+    if (title.includes(kw)) distractionScore += 2;
+    else if (allText.includes(kw)) distractionScore++;
   }
 
   let productiveScore = 0;
   for (const kw of PRODUCTIVE_SIGNALS) {
-    if (allText.includes(kw)) productiveScore++;
+    if (title.includes(kw)) productiveScore += 2;
+    else if (allText.includes(kw)) productiveScore++;
+  }
+
+  // Goal-contextual boost for keyword stage
+  if (sessionGoal) {
+    const goalWords = sessionGoal.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    let goalMatches = 0;
+    for (const word of goalWords) {
+      if (allText.includes(word)) goalMatches++;
+    }
+    if (goalWords.length > 0) {
+      const goalOverlap = goalMatches / goalWords.length;
+      if (goalOverlap >= 0.3) {
+        productiveScore += Math.round(goalOverlap * 5);
+      }
+    }
   }
 
   if (productiveScore > distractionScore && productiveScore >= 1) {
-    return { category: 'productive', confidence: 0.3 + Math.min(productiveScore * 0.05, 0.2), label: 'keyword: educational content' };
+    const conf = Math.min(0.3 + productiveScore * 0.04, 0.65);
+    return { category: 'productive', confidence: conf, label: 'keyword: educational content' };
   }
 
   if (distractionScore > productiveScore && distractionScore >= 1) {
-    return { category: 'distraction', confidence: 0.3 + Math.min(distractionScore * 0.05, 0.2), label: 'keyword: entertainment content' };
+    const conf = Math.min(0.3 + distractionScore * 0.04, 0.65);
+    return { category: 'distraction', confidence: conf, label: 'keyword: entertainment content' };
   }
 
   return { category: 'neutral', confidence: 0.25, label: 'keyword: uncertain content' };
@@ -106,7 +140,60 @@ function ensureMLReady() {
   }
 }
 
-// ─── Main classify function (4-stage pipeline) ───
+// ─── Stage 5: Goal-Relevance Adjustment ───
+
+/**
+ * Adjusts the raw ML classification based on session goal relevance.
+ * This is the key stage that makes the classifier understand:
+ *   - Content matching session goal → PRODUCTIVE (e.g., DBMS video when goal is "database")
+ *   - Educational but not goal-related → NEUTRAL (e.g., ML video when goal is "database")
+ *   - Entertainment/distraction → DISTRACTION (unchanged)
+ *
+ * @param {Object} result — raw classification from stages 2-4
+ * @param {Object} extractedContent — page content
+ * @param {string} sessionGoal — current session goal text
+ * @param {string} hostname — for logging
+ * @returns {Object} — adjusted classification
+ */
+function applyGoalRelevance(result, extractedContent, sessionGoal, hostname) {
+  if (!sessionGoal || !result) return result;
+
+  const goalRelevance = computeGoalRelevance(extractedContent, sessionGoal);
+
+  // HIGH goal relevance: content directly matches session topic → productive
+  // e.g., watching "Normalization in DBMS" when goal is "database"
+  if (goalRelevance >= 0.25) {
+    if (result.category !== 'productive') {
+      console.log(`[MindForge] 🎯 Goal-boost: ${result.category} → productive (relevance: ${goalRelevance.toFixed(2)}, goal: "${sessionGoal}") for ${hostname}`);
+      return {
+        ...result,
+        category: 'productive',
+        confidence: Math.max(0.7, goalRelevance),
+        label: `Goal-relevant: matches "${sessionGoal}"`,
+        method: result.method + '+goal-boost',
+      };
+    }
+    return result; // Already productive — keep it
+  }
+
+  // LOW goal relevance + ML says productive → educational but NOT session-related → neutral
+  // e.g., watching "ML tutorial" when goal is "database" — it's learning, but off-topic
+  if (goalRelevance < 0.1 && result.category === 'productive') {
+    console.log(`[MindForge] 📚 Goal-demote: productive → neutral (not related to "${sessionGoal}", relevance: ${goalRelevance.toFixed(2)}) for ${hostname}`);
+    return {
+      ...result,
+      category: 'neutral',
+      confidence: 0.5,
+      label: `Educational but not related to "${sessionGoal}"`,
+      method: result.method + '+goal-demote',
+    };
+  }
+
+  // Everything else: distraction stays distraction, neutral stays neutral
+  return result;
+}
+
+// ─── Main classify function (5-stage pipeline) ───
 
 /**
  * Classify a page's content.
@@ -148,19 +235,24 @@ async function classify(extractedContent, sessionGoal, userAllowlist = [], userB
     featureResult = extractFeatures(extractedContent, sessionGoal);
   } catch (err) {
     console.warn('[MindForge] Feature extraction failed:', err.message);
-    const kwResult = keywordClassify(extractedContent);
-    return { ...kwResult, contentType: 'text', method: 'keyword-fallback-error' };
+    const kwResult = keywordClassify(extractedContent, sessionGoal);
+    const fallback = { ...kwResult, contentType: 'text', method: 'keyword-fallback-error' };
+    return applyGoalRelevance(fallback, extractedContent, sessionGoal, hostname);
   }
 
   const { vector: featureVector, contentType } = featureResult;
 
-  // ─── Stage 2: KNN personalized check (goal-contextual) ───
+  // ─── Stages 2-4: ML Classification Pipeline ───
+  // Results are collected (not returned early) so Stage 5 can adjust them.
+  let result = null;
+
+  // Stage 2: KNN personalized check (goal-contextual)
   if (isKNNReady()) {
     try {
       const knnResult = classifyKNN(featureVector, sessionGoal);
       if (knnResult && knnResult.confidence >= 0.5) {
-        console.log(`[MindForge] ${knnResult.category === 'distraction' ? '✗' : knnResult.category === 'productive' ? '✓' : '—'} ${knnResult.category.toUpperCase()} (KNN): ${hostname} — confidence: ${knnResult.confidence.toFixed(2)} — goal: "${sessionGoal}"`);
-        return {
+        console.log(`[MindForge] [raw] ${knnResult.category.toUpperCase()} (KNN): ${hostname} — confidence: ${knnResult.confidence.toFixed(2)}`);
+        result = {
           category: knnResult.category,
           confidence: knnResult.confidence,
           label: `ML personalized: ${knnResult.category} (goal-contextual)`,
@@ -173,35 +265,47 @@ async function classify(extractedContent, sessionGoal, userAllowlist = [], userB
     }
   }
 
-  // ─── Stage 3: Naive Bayes general classifier ───
-  try {
-    const nbResult = classifyNaiveBayes(featureVector);
+  // Stage 3: Naive Bayes general classifier
+  if (!result) {
+    try {
+      const nbResult = classifyNaiveBayes(featureVector);
 
-    if (nbResult.confidence >= 0.4) {
-      const icon = nbResult.category === 'distraction' ? '✗' : nbResult.category === 'productive' ? '✓' : '—';
-      console.log(`[MindForge] ${icon} ${nbResult.category.toUpperCase()} (NaiveBayes): ${hostname} — confidence: ${nbResult.confidence.toFixed(2)} — scores: P=${nbResult.scores.productive.toFixed(2)} D=${nbResult.scores.distraction.toFixed(2)} N=${nbResult.scores.neutral.toFixed(2)}`);
-      return {
-        category: nbResult.category,
-        confidence: Math.min(nbResult.confidence, 0.9), // Cap at 0.9 since it's not domain-tier certainty
-        label: `ML classified: ${nbResult.category}`,
-        contentType,
-        method: 'naive-bayes',
-      };
+      if (nbResult.confidence >= 0.4) {
+        console.log(`[MindForge] [raw] ${nbResult.category.toUpperCase()} (NaiveBayes): ${hostname} — confidence: ${nbResult.confidence.toFixed(2)} — scores: P=${nbResult.scores.productive.toFixed(2)} D=${nbResult.scores.distraction.toFixed(2)} N=${nbResult.scores.neutral.toFixed(2)}`);
+        result = {
+          category: nbResult.category,
+          confidence: Math.min(nbResult.confidence, 0.9),
+          label: `ML classified: ${nbResult.category}`,
+          contentType,
+          method: 'naive-bayes',
+        };
+      }
+    } catch (err) {
+      console.warn('[MindForge] Naive Bayes classification failed:', err.message);
     }
-  } catch (err) {
-    console.warn('[MindForge] Naive Bayes classification failed:', err.message);
   }
 
-  // ─── Stage 4: Keyword fallback ───
-  const kwResult = keywordClassify(extractedContent);
-  const icon = kwResult.category === 'distraction' ? '✗' : kwResult.category === 'productive' ? '✓' : '—';
-  console.log(`[MindForge] ${icon} ${kwResult.category.toUpperCase()} (keyword-fallback): ${hostname} — ${kwResult.label}`);
+  // Stage 4: Keyword fallback (goal-aware)
+  if (!result) {
+    const kwResult = keywordClassify(extractedContent, sessionGoal);
+    console.log(`[MindForge] [raw] ${kwResult.category.toUpperCase()} (keyword): ${hostname} — ${kwResult.label}`);
+    result = { ...kwResult, contentType, method: 'keyword-fallback' };
+  }
 
-  return {
-    ...kwResult,
-    contentType,
-    method: 'keyword-fallback',
-  };
+  // ═══════════════════════════════════════
+  // Stage 5: Goal-Relevance Adjustment
+  // ═══════════════════════════════════════
+  // Override ML classification based on session goal:
+  //   - Content matching session goal → PRODUCTIVE
+  //   - Educational but off-topic   → NEUTRAL
+  //   - Entertainment               → DISTRACTION (unchanged)
+  result = applyGoalRelevance(result, extractedContent, sessionGoal, hostname);
+
+  // Final log
+  const icon = result.category === 'distraction' ? '✗' : result.category === 'productive' ? '✓' : '—';
+  console.log(`[MindForge] ${icon} FINAL: ${result.category.toUpperCase()} (${result.method}): ${hostname} — confidence: ${result.confidence.toFixed(2)} — ${result.label}`);
+
+  return result;
 }
 
 export { classify, getDomainTier, keywordClassify, ensureMLReady };

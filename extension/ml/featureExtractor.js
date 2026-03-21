@@ -70,7 +70,7 @@ function buildTFVector(text) {
 
 // ─── Meta Features ───
 // Additional non-text features appended to the vector
-const META_FEATURES_COUNT = 8;
+const META_FEATURES_COUNT = 10;
 
 /**
  * Detect content type from extracted content signals.
@@ -125,6 +125,73 @@ export function computeGoalSimilarity(goalText, pageText) {
 }
 
 /**
+ * Compute goal relevance using fuzzy matching.
+ * More aggressive than computeGoalSimilarity — uses substring, prefix,
+ * and cross-word matching to catch abbreviations and word variants.
+ * 
+ * Used by the goal-relevance adjustment stage in the classifier.
+ *
+ * @param {Object} extractedContent — { title, url, hostname, content }
+ * @param {string} goalText — Session goal text
+ * @returns {number} — 0 to 1 relevance score
+ */
+export function computeGoalRelevance(extractedContent, goalText) {
+  if (!goalText) return 0;
+
+  const title = (extractedContent.title || '').toLowerCase();
+  const content = (extractedContent.content || '').toLowerCase();
+  const url = (extractedContent.url || '').toLowerCase();
+  // Title gets double weight — it's the strongest topical indicator
+  const allText = [title, title, content, url].join(' ');
+
+  const goalWords = goalText.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  if (goalWords.length === 0) return 0;
+
+  const contentTokens = allText
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  const contentWordSet = new Set(contentTokens);
+
+  let totalScore = 0;
+
+  for (const goalWord of goalWords) {
+    // 1. Exact match (strongest signal)
+    if (contentWordSet.has(goalWord)) {
+      totalScore += 1.0;
+      continue;
+    }
+
+    // 2. Substring + prefix fuzzy matching
+    let bestPartial = 0;
+    for (const cw of contentWordSet) {
+      // Goal word found inside a content word (e.g., "data" in "database")
+      if (cw.length > goalWord.length && cw.includes(goalWord) && goalWord.length >= 3) {
+        bestPartial = Math.max(bestPartial, 0.8);
+      }
+      // Content word found inside goal word (e.g., "base" in "database")
+      if (goalWord.length > cw.length && goalWord.includes(cw) && cw.length >= 4) {
+        bestPartial = Math.max(bestPartial, 0.6);
+      }
+      // Shared prefix (e.g., "program" ↔ "programming")
+      if (goalWord.length >= 4 && cw.length >= 4) {
+        const prefixLen = Math.min(5, Math.min(goalWord.length, cw.length));
+        if (goalWord.substring(0, prefixLen) === cw.substring(0, prefixLen)) {
+          bestPartial = Math.max(bestPartial, 0.5);
+        }
+      }
+    }
+    totalScore += bestPartial;
+  }
+
+  return totalScore / goalWords.length;
+}
+
+/**
  * Extract a full feature vector from extracted content + session context.
  *
  * @param {Object} extractedContent — { title, url, hostname, content }
@@ -175,6 +242,15 @@ export function extractFeatures(extractedContent, sessionGoal = '') {
   // 8. TLD education/org signal (0 or 1)
   const eduTLDs = ['.edu', '.ac.', '.org', '.gov'];
   vec[metaStart + 7] = eduTLDs.some(tld => hostname.includes(tld)) ? 1 : 0;
+
+  // 9. Podcast content detected (0 or 1) — works across any site
+  const podcastSignals = ['podcast', 'episode', 'hosted by', 'listen now', 'show notes', 'subscribe to podcast'];
+  const isPodcast = podcastSignals.some(sig => allText.includes(sig)) ? 1 : 0;
+  vec[metaStart + 8] = isPodcast;
+
+  // 10. Has structured data (0 or 1) — content-rich pages tend to have schema.org data
+  const hasStructured = (extractedContent.structuredDataFound) ? 1 : 0;
+  vec[metaStart + 9] = hasStructured;
 
   return { vector: vec, contentType: ct };
 }

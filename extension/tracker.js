@@ -9,9 +9,28 @@ const FEEDBACK_KEY = 'mf_user_feedback';
 // ─── In-memory tracking state ───
 let activeTabId = null;
 let activeTabStartTime = null;
-let tabTracking = {}; // { [tabId]: { hostname, url, category, contentType, totalActiveMs, lastCategory } }
+// tabTracking: { [tabId]: { hostname, url, category, contentType, activeMsByCategory, totalActiveMs } }
+let tabTracking = {}; 
 
 // ─── Tab Switch Tracking ───
+
+/**
+ * Finalize the current active time for a specific tab into its category bucket.
+ */
+function finalizeTabTime(tabId) {
+  if (tabId === null || activeTabStartTime === null || !tabTracking[tabId]) return;
+  const now = Date.now();
+  const elapsed = now - activeTabStartTime;
+  
+  if (elapsed > 0 && elapsed < 3600000) { // Max 1 hour per tracking window
+    const cat = tabTracking[tabId].category;
+    if (!tabTracking[tabId].activeMsByCategory) {
+      tabTracking[tabId].activeMsByCategory = { productive: 0, distraction: 0, neutral: 0 };
+    }
+    tabTracking[tabId].activeMsByCategory[cat] = (tabTracking[tabId].activeMsByCategory[cat] || 0) + elapsed;
+    tabTracking[tabId].totalActiveMs += elapsed;
+  }
+}
 
 /**
  * Record a tab becoming active. Finalizes time for the previous tab.
@@ -23,14 +42,8 @@ export function onTabActivated(tabId, url, hostname) {
   const now = Date.now();
 
   // Finalize previous tab's time
-  if (activeTabId !== null && activeTabStartTime !== null) {
-    const elapsed = now - activeTabStartTime;
-    if (elapsed > 0 && elapsed < 3600000) { // Max 1 hour per tracking window
-      if (!tabTracking[activeTabId]) {
-        tabTracking[activeTabId] = { hostname: '', url: '', category: 'neutral', contentType: 'text', totalActiveMs: 0 };
-      }
-      tabTracking[activeTabId].totalActiveMs += elapsed;
-    }
+  if (activeTabId !== null) {
+    finalizeTabTime(activeTabId);
   }
 
   // Start tracking new tab
@@ -43,6 +56,7 @@ export function onTabActivated(tabId, url, hostname) {
       url: url || '',
       category: 'neutral',
       contentType: 'text',
+      activeMsByCategory: { productive: 0, distraction: 0, neutral: 0 },
       totalActiveMs: 0,
     };
   } else {
@@ -54,11 +68,26 @@ export function onTabActivated(tabId, url, hostname) {
 
 /**
  * Update classification result for a tab.
+ * If category changes mid-tab, finalize time *before* applying the new category.
  */
 export function updateTabClassification(tabId, category, contentType) {
   if (!tabTracking[tabId]) {
-    tabTracking[tabId] = { hostname: '', url: '', category: 'neutral', contentType: 'text', totalActiveMs: 0 };
+    tabTracking[tabId] = { 
+      hostname: '', 
+      url: '', 
+      category: 'neutral', 
+      contentType: 'text', 
+      activeMsByCategory: { productive: 0, distraction: 0, neutral: 0 },
+      totalActiveMs: 0 
+    };
   }
+
+  // If this is the active tab and the category is changing, finalize current run first
+  if (tabId === activeTabId && tabTracking[tabId].category !== category) {
+    finalizeTabTime(tabId);
+    activeTabStartTime = Date.now(); // reset timer for new category
+  }
+
   tabTracking[tabId].category = category || 'neutral';
   tabTracking[tabId].contentType = contentType || 'text';
 }
@@ -67,18 +96,12 @@ export function updateTabClassification(tabId, category, contentType) {
  * Clean up when a tab is closed.
  */
 export function onTabClosed(tabId) {
-  const now = Date.now();
-
   // Finalize time if this was the active tab
-  if (activeTabId === tabId && activeTabStartTime !== null) {
-    const elapsed = now - activeTabStartTime;
-    if (elapsed > 0 && tabTracking[tabId]) {
-      tabTracking[tabId].totalActiveMs += elapsed;
-    }
+  if (activeTabId === tabId) {
+    finalizeTabTime(tabId);
     activeTabId = null;
     activeTabStartTime = null;
   }
-
   // Don't delete the data — keep it for session analytics
 }
 
@@ -89,11 +112,10 @@ export function onTabClosed(tabId) {
  * Returns time in seconds for each category and content type.
  */
 export function getTimeBreakdown() {
-  // Finalize current active tab's time
-  const now = Date.now();
-  let currentElapsed = 0;
-  if (activeTabId !== null && activeTabStartTime !== null) {
-    currentElapsed = now - activeTabStartTime;
+  // Briefly finalize active tab to ensure we capture current ongoing time
+  if (activeTabId !== null) {
+    finalizeTabTime(activeTabId);
+    activeTabStartTime = Date.now(); // Restart timer so tracking continues
   }
 
   let productiveMs = 0;
@@ -104,19 +126,17 @@ export function getTimeBreakdown() {
   let interactiveMs = 0;
   let audioMs = 0;
 
-  for (const [tabId, data] of Object.entries(tabTracking)) {
-    let ms = data.totalActiveMs;
-    // Add current elapsed time for the active tab
-    if (parseInt(tabId) === activeTabId) {
-      ms += currentElapsed;
+  for (const data of Object.values(tabTracking)) {
+    // Accumulate from precise category buckets
+    if (data.activeMsByCategory) {
+      productiveMs += data.activeMsByCategory.productive || 0;
+      distractionMs += data.activeMsByCategory.distraction || 0;
+      neutralMs += data.activeMsByCategory.neutral || 0;
     }
 
-    // Category breakdown
-    if (data.category === 'productive') productiveMs += ms;
-    else if (data.category === 'distraction') distractionMs += ms;
-    else neutralMs += ms;
-
-    // Content type breakdown
+    // Content type is still roughly tracked by last known content type proportionally based on total time
+    // For simplicity, we assign the total tab time to its current content_type
+    const ms = data.totalActiveMs;
     if (data.contentType === 'video') videoMs += ms;
     else if (data.contentType === 'interactive') interactiveMs += ms;
     else if (data.contentType === 'audio') audioMs += ms;
@@ -141,31 +161,40 @@ export function getTimeBreakdown() {
 
 /**
  * Get per-site time data for analytics.
- * Returns array sorted by active time (descending).
+ * Returns array sorted by active time (descending), returning separate elements
+ * for different categories on the same host (e.g., youtube/productive vs youtube/distraction).
  */
 export function getPerSiteAnalytics() {
-  // Aggregate by hostname
+  // Ensure we capture ongoing active time
+  if (activeTabId !== null) {
+    finalizeTabTime(activeTabId);
+    activeTabStartTime = Date.now(); 
+  }
+
+  // Aggregate by hostname AND category
   const siteData = {};
 
-  for (const [tabId, data] of Object.entries(tabTracking)) {
+  for (const data of Object.values(tabTracking)) {
     const host = data.hostname || 'unknown';
-    if (!siteData[host]) {
-      siteData[host] = {
-        hostname: host,
-        category: data.category,
-        contentType: data.contentType,
-        totalSeconds: 0,
-        visits: 0,
-      };
+    
+    if (data.activeMsByCategory) {
+      for (const [cat, ms] of Object.entries(data.activeMsByCategory)) {
+        if (ms > 0) {
+          const key = `${host}|${cat}`;
+          if (!siteData[key]) {
+            siteData[key] = {
+              hostname: host,
+              category: cat,
+              contentType: data.contentType, // uses latest detected format
+              totalSeconds: 0,
+              visits: 0,
+            };
+          }
+          siteData[key].totalSeconds += Math.round(ms / 1000);
+          siteData[key].visits++;
+        }
+      }
     }
-
-    let ms = data.totalActiveMs;
-    if (parseInt(tabId) === activeTabId) {
-      ms += (Date.now() - (activeTabStartTime || Date.now()));
-    }
-
-    siteData[host].totalSeconds += Math.round(ms / 1000);
-    siteData[host].visits++;
   }
 
   return Object.values(siteData)

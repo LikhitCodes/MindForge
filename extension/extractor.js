@@ -285,11 +285,143 @@ function extractRedditContent() {
 }
 
 // ═══════════════════════════════════════
+//  GENERIC STRUCTURED DATA EXTRACTION
+// ═══════════════════════════════════════
+
+/**
+ * Extract ld+json (schema.org) structured data from the page.
+ * Many modern sites embed rich structured data that describes the content.
+ */
+function extractStructuredData() {
+  const results = [];
+  try {
+    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent);
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          const parts = [];
+          if (item['@type']) parts.push(`Type: ${Array.isArray(item['@type']) ? item['@type'].join(', ') : item['@type']}`);
+          if (item.name) parts.push(item.name);
+          if (item.headline) parts.push(item.headline);
+          if (item.description) parts.push(item.description.substring(0, 200));
+          if (item.author) {
+            const author = typeof item.author === 'string' ? item.author : (item.author.name || '');
+            if (author) parts.push(`Author: ${author}`);
+          }
+          if (item.genre) parts.push(`Genre: ${Array.isArray(item.genre) ? item.genre.join(', ') : item.genre}`);
+          if (item.keywords) parts.push(`Keywords: ${item.keywords}`);
+          if (item.articleSection) parts.push(`Section: ${item.articleSection}`);
+          if (item.about) {
+            const about = typeof item.about === 'string' ? item.about : (item.about.name || '');
+            if (about) parts.push(`About: ${about}`);
+          }
+          if (item.learningResourceType) parts.push(`ResourceType: ${item.learningResourceType}`);
+          if (item.educationalLevel) parts.push(`Level: ${item.educationalLevel}`);
+          if (parts.length > 0) results.push(parts.join(' | '));
+        }
+      } catch { /* malformed JSON — skip */ }
+    }
+  } catch { /* no structured data */ }
+  return results.join(' || ').substring(0, 500);
+}
+
+/**
+ * Extract Open Graph and other rich meta tags beyond basic title/description.
+ */
+function extractRichMeta() {
+  const parts = [];
+
+  // Open Graph
+  const ogType = document.querySelector('meta[property="og:type"]')?.content || '';
+  const ogTitle = document.querySelector('meta[property="og:title"]')?.content || '';
+  const ogDesc = document.querySelector('meta[property="og:description"]')?.content || '';
+  const ogSiteName = document.querySelector('meta[property="og:site_name"]')?.content || '';
+
+  // Article-specific meta
+  const articleSection = document.querySelector('meta[property="article:section"]')?.content || '';
+  const articleTag = document.querySelector('meta[property="article:tag"]')?.content || '';
+
+  // Standard meta
+  const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+  const keywords = document.querySelector('meta[name="keywords"]')?.content || '';
+  const author = document.querySelector('meta[name="author"]')?.content || '';
+  const category = document.querySelector('meta[name="category"]')?.content || '';
+
+  // Twitter card (often has different/richer descriptions)
+  const twitterDesc = document.querySelector('meta[name="twitter:description"]')?.content || '';
+
+  if (ogType) parts.push(`ContentType: ${ogType}`);
+  if (ogTitle) parts.push(ogTitle);
+  if (ogSiteName) parts.push(`Site: ${ogSiteName}`);
+  if (ogDesc) parts.push(ogDesc.substring(0, 200));
+  if (!ogDesc && twitterDesc) parts.push(twitterDesc.substring(0, 200));
+  if (!ogDesc && !twitterDesc && metaDesc) parts.push(metaDesc.substring(0, 200));
+  if (articleSection) parts.push(`Section: ${articleSection}`);
+  if (articleTag) parts.push(`Tag: ${articleTag}`);
+  if (keywords) parts.push(`Keywords: ${keywords}`);
+  if (author) parts.push(`Author: ${author}`);
+  if (category) parts.push(`Category: ${category}`);
+
+  return parts;
+}
+
+/**
+ * Extract topic signals from the page's heading hierarchy and navigation.
+ */
+function extractTopicSignals() {
+  const signals = [];
+
+  // H1 — primary topic (usually only one per page)
+  const h1 = document.querySelector('h1');
+  if (h1) {
+    const text = h1.textContent?.trim();
+    if (text && text.length > 2 && text.length < 300) signals.push(text);
+  }
+
+  // H2 — subtopics (grab first 5)
+  const h2s = document.querySelectorAll('h2');
+  let h2Count = 0;
+  for (const h2 of h2s) {
+    if (h2Count >= 5) break;
+    const text = h2.textContent?.trim();
+    if (text && text.length > 2 && text.length < 200) {
+      signals.push(text);
+      h2Count++;
+    }
+  }
+
+  // Breadcrumb / nav context
+  const navSelectors = [
+    'nav[aria-label*="breadcrumb"]',
+    '.breadcrumb', '.breadcrumbs',
+    '[itemtype*="BreadcrumbList"]',
+    'ol.breadcrumb',
+  ];
+  for (const sel of navSelectors) {
+    const nav = document.querySelector(sel);
+    if (nav) {
+      const text = nav.textContent?.trim().replace(/\s+/g, ' ');
+      if (text && text.length > 3 && text.length < 200) {
+        signals.push(`Navigation: ${text}`);
+        break;
+      }
+    }
+  }
+
+  return signals;
+}
+
+// ═══════════════════════════════════════
 //  MAIN EXTRACTOR
 // ═══════════════════════════════════════
 
 /**
- * Extract page content using site-specific extractors, then Readability fallback.
+ * Extract page content using a layered approach:
+ *   1. Site-specific deep extractors (YouTube, Reddit)
+ *   2. Readability.js (article-like pages)
+ *   3. Rich generic extraction (structured data + meta + headings)
  * Returns { title, url, hostname, content, extractionMethod, ... }
  */
 async function extractPageContent() {
@@ -323,47 +455,76 @@ async function extractPageContent() {
     }
   }
 
-  // ── 2. Try Readability ──
+  // ── 2. Gather universal signals (used by both Readability and fallback) ──
+  const structuredData = extractStructuredData();
+  const richMeta = extractRichMeta();
+  const topicSignals = extractTopicSignals();
+
+  // ── 3. Try Readability ──
   try {
     const docClone = document.cloneNode(true);
     const reader = new Readability(docClone, { charThreshold: 100 });
     const article = reader.parse();
 
     if (article && article.textContent && article.textContent.trim().length > 200) {
-      const content = article.textContent.trim().substring(0, 500);
+      // Enrich Readability output with structured data and topic signals
+      const readabilityText = article.textContent.trim().substring(0, 600);
+      const enrichment = [
+        ...richMeta,
+        ...topicSignals,
+        structuredData,
+      ].filter(Boolean);
+
+      const content = [readabilityText, ...enrichment]
+        .join(' | ')
+        .substring(0, 1200);
+
       return {
         title: article.title || document.title,
         url,
         hostname,
         content,
-        extractionMethod: 'readability',
+        extractionMethod: 'readability-enriched',
+        structuredDataFound: structuredData.length > 0,
       };
     }
   } catch (err) {
     console.log('[MindForge] Readability extraction failed:', err.message);
   }
 
-  // ── 3. Enhanced meta fallback ──
+  // ── 4. Rich generic fallback ──
   const title = document.title || '';
-  const ogTitle = document.querySelector('meta[property="og:title"]')?.content || '';
-  const ogDesc = document.querySelector('meta[property="og:description"]')?.content || '';
-  const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
-  const keywords = document.querySelector('meta[name="keywords"]')?.content || '';
-  const description = ogDesc || metaDesc;
-  const useTitle = ogTitle || title;
   const pathname = window.location.pathname;
 
-  const fallbackContent = [useTitle, description, keywords, pathname]
-    .filter(Boolean)
-    .join(' — ')
-    .substring(0, 600);
+  // Combine all signals: meta, headings, structured data, visible body text
+  let bodySnippet = '';
+  try {
+    const mainContent = document.querySelector('main, article, [role="main"], .content, #content');
+    if (mainContent) {
+      bodySnippet = mainContent.textContent?.trim().replace(/\s+/g, ' ').substring(0, 400) || '';
+    } else if (document.body) {
+      bodySnippet = document.body.textContent?.trim().replace(/\s+/g, ' ').substring(0, 300) || '';
+    }
+  } catch { /* fallback to empty */ }
+
+  const allParts = [
+    title,
+    ...richMeta,
+    ...topicSignals,
+    structuredData,
+    bodySnippet,
+    pathname,
+  ].filter(Boolean);
+
+  const fallbackContent = allParts.join(' | ').substring(0, 1200);
 
   return {
-    title: useTitle,
+    title: richMeta.find(p => !p.startsWith('ContentType:') && !p.startsWith('Site:')) || title,
     url,
     hostname,
     content: stripHtml(fallbackContent),
-    extractionMethod: 'fallback',
+    extractionMethod: 'generic-enriched',
+    structuredDataFound: structuredData.length > 0,
   };
 }
 

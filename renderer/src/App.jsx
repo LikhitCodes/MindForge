@@ -1,4 +1,10 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { useAuth } from './AuthContext';
+import LiveScore from './components/LiveScore';
+import Heatmap from './components/Heatmap';
+import DeepWorkRamp from './components/DeepWorkRamp';
+import FocusDebt from './components/FocusDebt';
 import Dashboard from './components/Dashboard';
 import AnalyticsDashboard from './components/Analytics';
 import PomodoroTimer from './components/PomodoroTimer';
@@ -7,6 +13,7 @@ import FocusRoom from './components/FocusRoom';
 import Session from './components/Session';
 import DistractionShield from './components/DistractionShield';
 import AmbientPlayer from './components/AmbientPlayer';
+import AuthPage from './components/AuthPage';
 
 const MAIN_NAV = [
   { label: 'Dashboard', path: '/' },
