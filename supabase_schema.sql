@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   distraction_sec INTEGER DEFAULT 0,
   browser_sec INTEGER DEFAULT 0,
   neutral_sec INTEGER DEFAULT 0,
-  idle_sec INTEGER DEFAULT 0
+  idle_sec INTEGER DEFAULT 0,
+  text_sec INTEGER DEFAULT 0,
+  video_sec INTEGER DEFAULT 0,
+  interactive_sec INTEGER DEFAULT 0,
+  audio_sec INTEGER DEFAULT 0
 );
 
 -- 4. Daily habits table
@@ -58,7 +62,20 @@ CREATE TABLE IF NOT EXISTS ramp (
 -- Analytics Tables (NEW — ML & Study Habits)
 -- =============================================
 
--- 6. Per-tab time analytics
+-- 6. Per-site session analytics
+CREATE TABLE IF NOT EXISTS session_sites (
+  id BIGSERIAL PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  hostname TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'neutral',    -- productive/distraction/neutral
+  content_type TEXT NOT NULL DEFAULT 'text',   -- text/video/interactive/audio
+  active_seconds INTEGER NOT NULL DEFAULT 0,
+  visits INTEGER NOT NULL DEFAULT 1,
+  date TEXT NOT NULL,                          -- YYYY-MM-DD for easy daily grouping
+  timestamp BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+);
+
+-- 7. Per-tab time analytics (Extension direct)
 CREATE TABLE IF NOT EXISTS tab_analytics (
   id BIGSERIAL PRIMARY KEY,
   session_id TEXT,
@@ -89,6 +106,9 @@ CREATE TABLE IF NOT EXISTS content_preferences (
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events (timestamp);
 CREATE INDEX IF NOT EXISTS idx_scores_timestamp ON scores (timestamp);
 CREATE INDEX IF NOT EXISTS idx_ramp_date ON ramp (date);
+CREATE INDEX IF NOT EXISTS idx_session_sites_session ON session_sites (session_id);
+CREATE INDEX IF NOT EXISTS idx_session_sites_hostname ON session_sites (hostname);
+CREATE INDEX IF NOT EXISTS idx_session_sites_date ON session_sites (date);
 CREATE INDEX IF NOT EXISTS idx_tab_analytics_timestamp ON tab_analytics (timestamp);
 CREATE INDEX IF NOT EXISTS idx_tab_analytics_category ON tab_analytics (category);
 CREATE INDEX IF NOT EXISTS idx_tab_analytics_session ON tab_analytics (session_id);
@@ -103,6 +123,7 @@ ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_habits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ramp ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tab_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content_preferences ENABLE ROW LEVEL SECURITY;
 
@@ -112,5 +133,6 @@ CREATE POLICY "Allow all on scores" ON scores FOR ALL USING (true) WITH CHECK (t
 CREATE POLICY "Allow all on sessions" ON sessions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on daily_habits" ON daily_habits FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on ramp" ON ramp FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on session_sites" ON session_sites FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on tab_analytics" ON tab_analytics FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on content_preferences" ON content_preferences FOR ALL USING (true) WITH CHECK (true);
