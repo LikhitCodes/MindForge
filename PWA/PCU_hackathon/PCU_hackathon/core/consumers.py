@@ -106,6 +106,13 @@ class FocusSessionConsumer(AsyncWebsocketConsumer):
         # 1. Save signal
         signal = await self._save_mobile_signal(session, event, data)
 
+        # Broadcast raw mobile signal to group immediately for zero-latency UI updates
+        await self.channel_layer.group_send(self.group_name, {
+            'type': 'raw_mobile_signal',
+            'signal_type': event,
+            'session_id': self.session_id,
+        })
+
         # 2. Handle session_joined specifically
         if event == 'session_joined':
             await self._mark_mobile_connected(session)
@@ -230,6 +237,13 @@ class FocusSessionConsumer(AsyncWebsocketConsumer):
             'type': 'session_ended',
             'session_id': event['session_id'],
             'message': event['message'],
+        }))
+
+    async def raw_mobile_signal(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'raw_mobile_signal',
+            'signal_type': event['signal_type'],
+            'session_id': event['session_id'],
         }))
 
     # -----------------------------------------------------------------------

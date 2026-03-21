@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const os = require('os');
 const { WebSocketServer } = require('ws');
 const {
   insertEvent,
@@ -34,6 +35,47 @@ function broadcast(data) {
 }
 
 /**
+ * Bridge Django WebSocket → Express broadcast
+ * When Django fires mobile_connected_notification (phone scanned QR),
+ * we relay it to Electron so the QR wait page transitions to active.
+ */
+function startDjangoBridge(sessionId) {
+  if (!sessionId) return;
+  try {
+    const djangoWs = new (require('ws'))(`ws://127.0.0.1:8000/ws/session/${sessionId}/`);
+    djangoWs.on('open', () => {
+      console.log(`[Bridge] Connected to Django WS for session ${sessionId}`);
+      // Identify as desktop so Django marks it connected
+      djangoWs.send(JSON.stringify({
+        device: 'desktop', event: 'session_start', session_id: sessionId,
+      }));
+    });
+    djangoWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        // Relay phone connection events to Electron
+        if (
+          msg.type === 'mobile_connected_notification' ||
+          msg.type === 'phone_connected' ||
+          msg.type === 'score_update' ||
+          msg.type === 'raw_mobile_signal' ||
+          msg.type === 'distraction_alert' ||
+          msg.type === 'device_disconnected'
+        ) {
+          broadcast(msg); // forward to all Express WS clients (Electron)
+        }
+      } catch (_) {}
+    });
+    djangoWs.on('error', (e) => console.warn('[Bridge] Django WS error:', e.message));
+    djangoWs.on('close', () => console.log('[Bridge] Django WS closed'));
+    return djangoWs;
+  } catch (e) {
+    console.warn('[Bridge] Could not start Django bridge:', e.message);
+    return null;
+  }
+}
+
+/**
  * Start Express + WebSocket server
  */
 function startServer() {
@@ -53,6 +95,23 @@ function startServer() {
     // ─── Health check ───
     app.get('/ping', (req, res) => {
       res.json({ status: 'alive', version: '1.0.0' });
+    });
+
+    // ─── Network info (returns PC's real LAN IPs) ───
+    app.get('/network-info', (req, res) => {
+      const interfaces = os.networkInterfaces();
+      const ips = [];
+      for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+          // Skip loopback and IPv6
+          if (iface.family === 'IPv4' && !iface.internal) {
+            ips.push({ name, address: iface.address });
+          }
+        }
+      }
+      // Prefer Wi-Fi / Ethernet (not 192.168.137.x which is usually hotspot)
+      const preferred = ips.find(i => !i.address.startsWith('192.168.137')) || ips[0];
+      res.json({ ips, preferred: preferred?.address || 'localhost' });
     });
 
     // ─── AI Validation (Groq) ───
@@ -342,8 +401,8 @@ or
       else reject(err);
     });
 
-    server.listen(PORT, () => {
-      console.log(`[Server] Express + WS on port ${PORT}`);
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`[Server] Express + WS on http://0.0.0.0:${PORT} (LAN accessible)`);
       startScorer(broadcast);
       resolve();
     });

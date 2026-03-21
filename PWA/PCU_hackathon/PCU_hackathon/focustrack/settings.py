@@ -10,7 +10,7 @@ SECRET_KEY = 'django-insecure-focustrack-dev-secret-change-in-production-xyz789'
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '10.68.241.107', '192.168.1.4', '10.111.60.168']
+ALLOWED_HOSTS = ['*']
 
 # Application definition
 INSTALLED_APPS = [

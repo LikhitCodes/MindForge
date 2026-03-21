@@ -1,280 +1,131 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { habitsApi } from '../api';
 
-const API = 'http://localhost:39871';
-
-/* ─── Contribution Grid ─── */
-function ContributionGrid() {
-  const days = 30;
-  const cells = Array.from({ length: days }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (days - 1 - i));
-    return { date: d.toISOString().slice(0, 10), day: d.getDay() };
-  });
-
-  // Simulated: in real app, fetch from API for each day
-  return (
-    <div className="flex flex-wrap gap-[3px]">
-      {cells.map((cell) => (
-        <div
-          key={cell.date}
-          className="w-3 h-3 rounded-sm transition-transform duration-200 hover:scale-125"
-          style={{
-            background: 'rgba(124, 92, 252, 0.15)',
-          }}
-          title={cell.date}
-        />
-      ))}
-    </div>
-  );
-}
-
-/* ─── Meditation Timer ─── */
-function MeditationTimer({ onComplete }) {
-  const [running, setRunning] = useState(false);
-  const [seconds, setSeconds] = useState(300); // 5 minutes
-  const intervalRef = useRef(null);
-
-  const start = useCallback(() => {
-    if (running) return;
-    setRunning(true);
-  }, [running]);
-
-  useEffect(() => {
-    if (running && seconds > 0) {
-      intervalRef.current = setInterval(() => {
-        setSeconds((s) => {
-          if (s <= 1) {
-            clearInterval(intervalRef.current);
-            setRunning(false);
-            onComplete();
-            return 0;
-          }
-          return s - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [running]);
-
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  const progress = ((300 - seconds) / 300) * 100;
-
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="relative w-24 h-24">
-        {/* Background circle */}
-        <svg className="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(124,92,252,0.1)" strokeWidth="6" />
-          <circle
-            cx="50" cy="50" r="42"
-            fill="none"
-            stroke="var(--accent-purple)"
-            strokeWidth="6"
-            strokeDasharray={`${progress * 2.64} 264`}
-            strokeLinecap="round"
-            className="transition-all duration-1000"
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-lg font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-            {mins}:{secs.toString().padStart(2, '0')}
-          </span>
-        </div>
-      </div>
-      {!running && seconds === 300 && (
-        <button
-          onClick={start}
-          className="btn-primary w-full py-2.5 mt-2 text-xs"
-        >
-          Begin
-        </button>
-      )}
-      {running && (
-        <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-          Breathe deeply...
-        </span>
-      )}
-      {seconds === 0 && (
-        <span className="text-xs font-semibold" style={{ color: 'var(--score-green)' }}>
-          ✓ Complete!
-        </span>
-      )}
-    </div>
-  );
-}
-
-/* ─── Habit Card ─── */
-function HabitCard({ icon, title, description, done, onComplete, children }) {
-  return (
-    <div
-      className="premium-card p-6 flex flex-col transition-all duration-300"
-      style={{
-        borderColor: done ? 'var(--score-green)' : 'var(--border)',
-      }}
-    >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{icon}</span>
-          <div>
-            <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {title}
-            </h4>
-            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              {description}
-            </p>
-          </div>
-        </div>
-        {done && (
-          <div
-            className="w-6 h-6 rounded-full flex items-center justify-center"
-            style={{ background: 'var(--score-green)' }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
-        )}
-      </div>
-      <div className="flex-1 flex items-center justify-center py-2">
-        {children || (
-          !done && onComplete && (
-            <button
-              onClick={onComplete}
-              className="btn-primary w-full py-2.5 text-xs font-semibold"
-            >
-              Mark Complete
-            </button>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─── Main Component ─── */
 export default function DailyHabits() {
-  const [habits, setHabits] = useState({
-    read_done: false,
-    meditation_done: false,
-    session_done: false,
-    streak_count: 0,
-  });
+  const [breathingRunning, setBreathingRunning] = useState(false);
+  const [breathSeconds, setBreathSeconds] = useState(5 * 60);
+  const [habits, setHabits] = useState({ read_done: false, meditation_done: false, session_done: false, streak_count: 0 });
   const [loading, setLoading] = useState(true);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const breathDisplay = `${Math.floor(breathSeconds / 60)}:${String(breathSeconds % 60).padStart(2,'0')}`;
 
   useEffect(() => {
-    fetch(`${API}/habits?date=${today}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setHabits(d);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error('[DailyHabits] Fetch error:', err);
-        setLoading(false);
-      });
+    habitsApi.get().then(h => { setHabits(h); setLoading(false); }).catch(() => setLoading(false));
   }, []);
 
-  async function markHabit(habit) {
-    try {
-      await fetch(`${API}/habit-complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ habit }),
-      });
-      setHabits((prev) => ({
-        ...prev,
-        [`${habit}_done`]: true,
-      }));
-    } catch (err) {
-      console.error('[DailyHabits] Error marking habit:', err);
-    }
+  async function toggleHabit(key, apiKey) {
+    const newVal = !habits[key];
+    setHabits(h => ({ ...h, [key]: newVal }));
+    try { await habitsApi.complete(apiKey); } catch (_) {}
+    // Refresh to get updated streak
+    try { const fresh = await habitsApi.get(); setHabits(fresh); } catch (_) {}
   }
 
-  const completedCount = [habits.read_done, habits.meditation_done, habits.session_done].filter(Boolean).length;
+  const readDone = habits.read_done;
+  const meditationDone = habits.meditation_done;
+  const sessionDone = habits.session_done;
+  const streakCount = habits.streak_count || 0;
+  const STREAK_COUNT = 30;
+  const COMPLETE_UNTIL = Math.min(streakCount, STREAK_COUNT);
 
   return (
-    <div className="h-full overflow-y-auto pr-2 pb-6" style={{ scrollbarGutter: 'stable' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-            Daily Habits
-          </h2>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-            Build your focus foundation — {today}
-          </p>
-        </div>
+    <div style={{ width: '100%', background: '#000000', padding: '40px 48px', boxSizing: 'border-box', minHeight: 'calc(100vh - 60px)', overflowY: 'auto' }}>
 
-          <div className="flex items-center gap-2">
-            <div className="px-4 py-1.5 rounded-lg flex items-center bg-zinc-800 border border-zinc-700">
-              <span className="text-sm mr-2">🔥</span>
-              <span className="text-sm font-bold text-amber-500 tabular-nums">
-                {habits.streak_count}
-              </span>
-              <span className="ml-1 text-[10px] font-medium text-zinc-400 uppercase tracking-widest">
-                Streak
-              </span>
-            </div>
-            <div className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${completedCount === 3 ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>
-              {completedCount}/3 Done
+      {/* HABIT CARDS ROW */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '40px' }}>
+
+        {/* CARD 1 — 5-min Read */}
+        <div style={{ background: '#111111', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ width: '36px', height: '36px', background: '#1a1a2e', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>📖</div>
+              <div>
+                <div style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600 }}>5-min Read</div>
+                <div style={{ color: '#6b7280', fontSize: '14px', marginTop: '4px' }}>Read an article or book chapter</div>
+              </div>
             </div>
           </div>
+          <button
+            onClick={() => toggleHabit('read_done', 'read')}
+            style={{ background: readDone ? '#1a1a1a' : '#ffffff', color: readDone ? '#6b7280' : '#000000', borderRadius: '8px', padding: '12px', width: '100%', fontSize: '14px', fontWeight: 600, border: readDone ? '1px solid #374151' : 'none', cursor: 'pointer' }}
+          >
+            {readDone ? '✓ Completed' : 'Mark Complete'}
+          </button>
+        </div>
+
+        {/* CARD 2 — Guided breathing */}
+        <div style={{ background: '#111111', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', width: '100%', marginBottom: '12px' }}>
+            <div style={{ width: '36px', height: '36px', background: '#1a1a2e', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>🔔</div>
+            <div style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600 }}>Guided breathing exercise</div>
+          </div>
+
+          {/* Circular timer */}
+          <div style={{ width: '120px', height: '120px', borderRadius: '50%', border: '3px solid #312e81', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '12px 0' }}>
+            <span style={{ fontSize: '28px', fontWeight: 700, color: '#ffffff' }}>{breathDisplay}</span>
+          </div>
+
+          <button
+            onClick={() => setBreathingRunning(r => !r)}
+            style={{ background: '#ffffff', color: '#000000', borderRadius: '8px', padding: '12px', width: '100%', fontSize: '14px', fontWeight: 600, border: 'none', cursor: 'pointer' }}
+          >
+            {breathingRunning ? 'Pause' : 'Begin'}
+          </button>
+        </div>
+
+        {/* CARD 3 — Session */}
+        <div style={{ background: '#111111', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', minHeight: '220px', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '8px' }}>
+            <div style={{ width: '36px', height: '36px', background: 'linear-gradient(135deg, #ec4899, #8b5cf6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>🎯</div>
+            <div>
+              <div style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600 }}>Session</div>
+              <div style={{ color: '#6b7280', fontSize: '14px', marginTop: '4px' }}>30+ min with avg score ≥ 70</div>
+            </div>
+          </div>
+          <div style={{ color: '#6b7280', fontSize: '13px', marginTop: '16px', flex: 1 }}>
+            Auto-completes when you achieve a 30+ minute focus session with score ≥ 70
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, #ec4899, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <span className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Loading habits...</span>
+      {/* HABIT STREAK SECTION */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <span style={{ color: '#ffffff', fontSize: '18px', fontWeight: 500 }}>Habit Streak (Last 30 Days)</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', fontSize: '12px', color: '#6b7280', letterSpacing: '1px', textTransform: 'uppercase' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '14px', height: '14px', borderRadius: '3px', border: '1px solid #374151', background: 'transparent' }}></div>
+              INCOMPLETE
+            </div>
+            <span>|</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '14px', height: '14px', borderRadius: '3px', background: '#6366f1' }}></div>
+              <div style={{ width: '14px', height: '14px', borderRadius: '3px', background: '#6366f1' }}></div>
+              COMPLETE
+            </div>
+          </div>
         </div>
-      ) : (
-        <>
-          {/* Habit cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <HabitCard
-              icon="📖"
-              title="5-min Read"
-              description="Read an article or book chapter"
-              done={habits.read_done}
-              onComplete={() => markHabit('read')}
-            />
-            <HabitCard
-              icon="🧘"
-              title="5-min Meditation"
-              description="Guided breathing exercise"
-              done={habits.meditation_done}
-            >
-              {!habits.meditation_done && (
-                <MeditationTimer onComplete={() => markHabit('meditation')} />
-              )}
-            </HabitCard>
-            <HabitCard
-              icon="🎯"
-              title="Focus Session"
-              description="30+ min with avg score ≥ 70"
-              done={habits.session_done}
-            >
-              {!habits.session_done && (
-                <div className="text-center">
-                  <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                    Auto-completes when you achieve a 30+ minute focus session with score ≥ 70
-                  </p>
-                </div>
-              )}
-            </HabitCard>
-          </div>
 
-          {/* Contribution grid */}
-          <div className="glass-card p-5">
-            <h4 className="text-xs font-semibold uppercase tracking-wider mb-3"
-              style={{ color: 'var(--text-tertiary)' }}>
-              Last 30 Days
-            </h4>
-            <ContributionGrid />
-          </div>
-        </>
-      )}
+        {/* 30 squares */}
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'nowrap' }}>
+          {Array.from({ length: STREAK_COUNT }).map((_, i) => {
+            const isComplete = i < COMPLETE_UNTIL;
+            return (
+              <div key={i} style={{
+                width: '28px', height: '28px', borderRadius: '6px', flexShrink: 0,
+                background: isComplete ? '#6366f1' : 'transparent',
+                border: isComplete ? 'none' : '1px solid #374151'
+              }} />
+            );
+          })}
+        </div>
+      </div>
+
     </div>
   );
 }

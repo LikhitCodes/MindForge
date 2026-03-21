@@ -19,12 +19,12 @@ import {
   saveContentPreferences,
 } from './tracker.js';
 
-const API_URL = 'http://localhost:39871';
-const WS_URL = 'ws://localhost:39871';
+const API_URL = 'http://localhost:8000/api';
+const WS_BASE_URL = 'ws://localhost:8000/ws/session';
 
 // ─── In-memory state ───
 
-let sessionState = { active: false, goal: '', score: 0, label: '', startTime: 0 };
+let sessionState = { active: false, sessionId: null, goal: '', score: 0, label: '', startTime: 0 };
 let wsConnection = null;
 let wsReconnectDelay = 1000;
 let wsReconnectTimer = null;
@@ -136,21 +136,24 @@ async function sendAnalyticsToDesktop(analytics) {
 
 async function fetchSessionStatus() {
   try {
-    const resp = await fetch(`${API_URL}/session/status`);
+    const resp = await fetch(`${API_URL}/sessions/status/`);
     const data = await resp.json();
     desktopAlive = true;
 
-    if (data.active) {
+    if (data.active && data.session_id) {
       sessionState = {
         active: true,
+        sessionId: data.session_id,
         goal: data.goal || '',
-        score: data.lastScore || data.avgScore || 0,
-        label: data.lastScore >= 70 ? 'Deep work' : data.lastScore >= 50 ? 'Moderate' : 'Distracted',
-        startTime: data.startTime || Date.now(),
+        score: data.last_score || data.lastScore || data.avgScore || 0,
+        label: data.label || 'Deep work',
+        startTime: data.start_time || data.startTime || Date.now(),
         elapsedMinutes: data.elapsedMinutes || 0,
       };
+      // Auto-connect WS if active
+      connectWebSocket(data.session_id);
     } else {
-      sessionState = { active: false, goal: '', score: 0, label: '', startTime: 0 };
+      sessionState = { active: false, sessionId: null, goal: '', score: 0, label: '', startTime: 0 };
     }
     return sessionState;
   } catch {
@@ -161,11 +164,12 @@ async function fetchSessionStatus() {
 
 // ─── WebSocket Connection ───
 
-function connectWebSocket() {
+function connectWebSocket(sessionId) {
+  if (!sessionId) return;
   if (wsConnection && wsConnection.readyState <= 1) return;
 
   try {
-    wsConnection = new WebSocket(WS_URL);
+    wsConnection = new WebSocket(`${WS_BASE_URL}/${sessionId}/`);
 
     wsConnection.onopen = () => {
       console.log('[MindForge] WebSocket connected');
@@ -200,7 +204,9 @@ function scheduleReconnect() {
   if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
   wsReconnectTimer = setTimeout(() => {
     wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
-    connectWebSocket();
+    if (sessionState.sessionId) {
+      connectWebSocket(sessionState.sessionId);
+    }
   }, wsReconnectDelay);
 }
 
@@ -252,6 +258,7 @@ function handleWSMessage(data) {
     case 'session_status':
       if (data.active) {
         sessionState.active = true;
+        sessionState.sessionId = data.session_id || data.sessionId;
         sessionState.goal = data.goal || '';
         sessionState.score = data.lastScore || 0;
         sessionState.startTime = data.startTime || Date.now();
@@ -259,6 +266,22 @@ function handleWSMessage(data) {
       break;
   }
 }
+
+// ─── External Messaging ───
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message.type === 'START_SESSION') {
+    console.log('[MindForge] Received START_SESSION from Renderer', message.sessionId);
+    sessionState.active = true;
+    sessionState.sessionId = message.sessionId;
+    
+    // Reset tracking for new session
+    resetTracking();
+
+    connectWebSocket(message.sessionId);
+    sendResponse({ ok: true });
+  }
+  return true;
+});
 
 // ─── Tab Communication Helpers ───
 
@@ -359,9 +382,24 @@ async function classifyTab(tabId, url, title) {
     method: result.method,
   }).catch(err => console.warn('[MindForge] History log error:', err.message));
 
-  // Send event to desktop app (non-blocking)
-  sendEventToDesktop(url, extractedContent.title, result.category, result.confidence, result.contentType)
-    .catch(err => console.warn('[MindForge] Desktop event error:', err.message));
+  // Send event to desktop app (non-blocking) via WS if active, else fallback to POST
+  const eventPayload = {
+    type: 'browser_signal',
+    url: url,
+    title: extractedContent.title,
+    category: result.category,
+    confidence: result.confidence,
+    contentType: result.contentType,
+    timestamp: Date.now()
+  };
+
+  if (sessionState.active && wsConnection && wsConnection.readyState === 1) {
+    wsConnection.send(JSON.stringify(eventPayload));
+  } else {
+    // We don't necessarily need to ping if there's no session, but we can try POSTing to Django
+    sendEventToDesktop(url, extractedContent.title, result.category, result.confidence, result.contentType)
+      .catch(err => console.warn('[MindForge] Desktop event error:', err.message));
+  }
 
   // Determine UI action based on classification
   if (!sessionState.active) {
@@ -738,8 +776,10 @@ console.log('[MindForge] Service worker script loaded (v3.0 — ML-enhanced)');
 // Periodic session status check (every 30s) + analytics persistence
 setInterval(async () => {
   await fetchSessionStatus();
-  if (!wsConnection || wsConnection.readyState > 1) {
-    connectWebSocket();
+  if (sessionState.active && sessionState.sessionId) {
+    if (!wsConnection || wsConnection.readyState > 1) {
+      connectWebSocket(sessionState.sessionId);
+    }
   }
   // Periodically persist analytics
   if (sessionState.active) {

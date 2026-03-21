@@ -4,6 +4,7 @@ REST API views for FocusTrack core.
 
 import random
 import string
+import socket
 from datetime import datetime, timezone, timedelta
 
 from django.utils import timezone as dj_timezone
@@ -28,6 +29,17 @@ def _generate_session_id():
         sid = ''.join(random.choices(chars, k=6))
         if not FocusSession.objects.filter(session_id=sid).exists():
             return sid
+
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
 
 
 def _get_active_session(session_id):
@@ -66,13 +78,18 @@ def create_session(request):
         sensitivity=sensitivity,
     )
 
-    host = request.get_host()
+    # Use LAN IP instead of request.get_host() (which is always localhost) for mobile PWA
+    lan_ip = get_local_ip()
+    host = f"{lan_ip}:8000"
     scheme = 'wss' if request.is_secure() else 'ws'
     http_scheme = 'https' if request.is_secure() else 'http'
 
+    # The WS URL for the desktop (React) can stay local, but the PWA URL MUST be the network IP
+    desktop_ws = f"{scheme}://{request.get_host()}/ws/session/{session_id}/"
+
     return Response({
         'session_id': session_id,
-        'ws_url': f'{scheme}://{host}/ws/session/{session_id}/',
+        'ws_url': desktop_ws,
         'pwa_url': f'{http_scheme}://{host}/join?session={session_id}',
     }, status=201)
 

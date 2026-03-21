@@ -1,178 +1,158 @@
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, LineChart, Line, Tooltip } from 'recharts';
+import { analyticsApi } from '../api';
 
-const API = 'http://localhost:39871';
-
-function StatCard({ label, value, unit, color }) {
-  return (
-    <div className="premium-card p-5 flex flex-col">
-      <span className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-        {label}
-      </span>
-      <div className="flex items-baseline gap-1">
-        <span className="text-3xl font-black tabular-nums" style={{ color: color || 'var(--text-primary)' }}>
-          {value}
-        </span>
-        {unit && <span className="text-sm font-medium" style={{ color: 'var(--text-tertiary)' }}>{unit}</span>}
-      </div>
-    </div>
-  );
-}
-
-const CustomTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="premium-card px-3 py-2 text-xs" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-      <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color }}>
-          {p.name}: <strong>{p.value}</strong>
-        </p>
-      ))}
-    </div>
-  );
+const CARD = {
+  background: '#1a1a1a',
+  borderRadius: '12px',
+  padding: '24px',
+  border: '1px solid rgba(255,255,255,0.06)',
 };
 
-export default function Analytics() {
-  const [range, setRange] = useState('week');
+const FOCUS_WINDOWS = [
+  { time: '12:00', score: 83 },
+  { time: '8:00',  score: 80 },
+  { time: '11:00', score: 80 },
+  { time: '10:00', score: 78 },
+  { time: '9:00',  score: 76 },
+];
+
+const VOLUME_DATA = [
+  { day: 'Sat, Mar 21', v: 30 },
+  { day: 'Mar 14',  v: 45 },
+  { day: 'Sun, Mar 19', v: 70 },
+  { day: 'Fri, Mar 16', v: 88 },
+  { day: 'Thu, Mar 21', v: 62 },
+  { day: '',         v: 90 },
+];
+
+const INTEGRITY_DATA = [
+  { d: 'Sat, Mar 14', v: 50 },
+  { d: 'Sat, Mar 16', v: 50 },
+  { d: 'Sat, Mar 13', v: 50 },
+  { d: 'Sat, Mar 17', v: 38 },
+  { d: 'Sat, Mar 16', v: 35 },
+  { d: 'Sat, Mar 27', v: 45 },
+  { d: 'Tat, Mar 15', v: 62 },
+  { d: 'Tat, Mar 27', v: 52 },
+  { d: 'Sri, Mar 26', v: 44 },
+  { d: 'Sat, Mar 27', v: 50 },
+  { d: 'Sat, Mar 21', v: 50 },
+];
+
+export default function AnalyticsDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
-    fetch(`${API}/analytics?range=${range}`)
-      .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [range]);
+    analyticsApi.get('week').then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin w-8 h-8 border-4 border-zinc-600 border-t-white rounded-full" />
-      </div>
-    );
-  }
+  // Build chart data from real API or fallback
+  const focusWindows = data?.bestHours?.slice(0, 5).map(h => ({
+    time: `${h.hour}:00`, score: h.avgScore,
+  })) || FOCUS_WINDOWS;
 
-  if (!data) {
-    return (
-      <div className="flex items-center justify-center h-full text-zinc-500">
-        Failed to load analytics data
-      </div>
-    );
-  }
+  const volumeData = data?.dailyStats?.slice(-6).map(d => ({
+    day: d.date?.slice(5) || d.date, v: d.deepWork || 0,
+  })) || VOLUME_DATA;
 
-  // Format daily data for charts
-  const chartData = (data.dailyStats || []).map((d) => ({
-    date: new Date(d.date).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' }),
-    'Deep Work': d.deepWork,
-    'Avg Score': d.avgScore,
-    Sessions: d.sessions,
-  }));
+  const integrityData = data?.dailyStats?.map(d => ({
+    d: d.date?.slice(5) || d.date, v: d.avgScore || 0,
+  })) || INTEGRITY_DATA;
 
-  // Best hours data
-  const hoursData = (data.bestHours || []).slice(0, 8).map((h) => ({
-    hour: `${h.hour}:00`,
-    score: h.avgScore,
-  }));
+  const totalOutput = data?.totalDeepWork || 0;
+  const efficiency  = data?.avgScore || 0;
+  const volume      = data?.totalSessions || 0;
 
   return (
-    <div className="h-full overflow-y-auto pr-2 pb-6" style={{ scrollbarGutter: 'stable' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Analytics</h2>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-            Your focus trends at a glance
-          </p>
-        </div>
-        <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--bg-secondary)' }}>
-          {['week', 'month'].map((r) => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all capitalize ${
-                range === r ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              {r === 'week' ? 'This Week' : 'This Month'}
-            </button>
-          ))}
-        </div>
+    <div style={{ width: '100%', background: '#0d0d0f', padding: '40px 48px', boxSizing: 'border-box', minHeight: 'calc(100vh - 60px)', overflowY: 'auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+
+      {/* Page Header */}
+      <div style={{ marginBottom: '32px' }}>
+        <h1 style={{ color: '#ffffff', fontSize: '32px', fontWeight: 700, margin: '0 0 4px 0' }}>
+          <span style={{ fontStyle: 'italic', fontWeight: 400 }}>Seseric</span> Dashboard
+        </h1>
+        <p style={{ color: '#6b7280', fontSize: '14px', margin: 0 }}>Key Deep Works list of deep work performance metrics.</p>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total Deep Work" value={data.totalDeepWork} unit="min" color="var(--score-green)" />
-        <StatCard label="Avg Score" value={data.avgScore} color="var(--score-amber)" />
-        <StatCard label="Sessions" value={data.totalSessions} />
-        <StatCard label="Current Streak" value={data.currentStreak} unit="days" color="var(--score-green)" />
-      </div>
+      {/* TOP ROW: 3 stat cards + Top 5 Focus Windows + Volume Output */}
+      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '16px', marginBottom: '16px', alignItems: 'start' }}>
 
-      {/* Deep Work Chart */}
-      <div className="premium-card p-6 mb-6">
-        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-          Daily Deep Work
-        </h3>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="date" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-            <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-            <Tooltip content={<CustomTooltip />} />
-            <Bar dataKey="Deep Work" fill="var(--score-green)" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Focus Score Trend */}
-      <div className="premium-card p-6 mb-6">
-        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-          Focus Score Trend
-        </h3>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="date" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-            <YAxis domain={[0, 100]} tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-            <Tooltip content={<CustomTooltip />} />
-            <Line type="monotone" dataKey="Avg Score" stroke="var(--score-amber)" strokeWidth={2} dot={{ fill: 'var(--score-amber)', r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Best Hours */}
-      <div className="premium-card p-6">
-        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-          Most Productive Hours
-        </h3>
-        {hoursData.length > 0 ? (
-          <div className="space-y-3">
-            {hoursData.map((h, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-xs font-mono w-12 text-right" style={{ color: 'var(--text-tertiary)' }}>
-                  {h.hour}
-                </span>
-                <div className="flex-1 h-6 rounded" style={{ background: 'var(--bg-secondary)' }}>
-                  <div
-                    className="h-full rounded transition-all duration-500"
-                    style={{
-                      width: `${h.score}%`,
-                      background: h.score >= 70 ? 'var(--score-green)' : h.score >= 50 ? 'var(--score-amber)' : 'var(--score-red)',
-                      opacity: 0.8,
-                    }}
-                  />
-                </div>
-                <span className="text-xs font-bold tabular-nums w-8" style={{ color: 'var(--text-primary)' }}>
-                  {h.score}
-                </span>
-              </div>
-            ))}
+        {/* LEFT: 3 stacked stat cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>TOTAL OUTPUT</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+              <span style={{ fontSize: '48px', fontWeight: 800, color: '#22c55e', lineHeight: 1 }}>{loading ? '...' : totalOutput}</span>
+              <span style={{ fontSize: '18px', color: '#22c55e', fontWeight: 500 }}>min</span>
+            </div>
           </div>
-        ) : (
-          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No data yet. Complete some focus sessions!</p>
-        )}
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>EFFICIENCY</div>
+            <span style={{ fontSize: '48px', fontWeight: 800, color: '#f59e0b', lineHeight: 1 }}>{loading ? '...' : efficiency}</span>
+          </div>
+          <div style={CARD}>
+            <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '8px' }}>VOLUME</div>
+            <span style={{ fontSize: '48px', fontWeight: 800, color: '#a855f7', lineHeight: 1 }}>{loading ? '...' : volume}</span>
+          </div>
+        </div>
+
+        {/* MIDDLE: Top 5 Focus Windows */}
+        <div style={CARD}>
+          <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>TOP 5 FOCUS WINDOWS</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {focusWindows.map((fw, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ color: '#6b7280', fontSize: '13px', width: '42px', flexShrink: 0 }}>{fw.time}</span>
+              <div style={{ flex: 1, height: '28px', background: '#111', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
+                <div style={{ width: `${Math.min(fw.score, 100)}%`, height: '100%', background: '#22c55e', borderRadius: '4px', opacity: 0.85 }} />
+              </div>
+              <span style={{ color: '#ffffff', fontSize: '13px', fontWeight: 600, width: '24px', textAlign: 'right', flexShrink: 0 }}>{fw.score}</span>
+            </div>
+          ))}
+          </div>
+        </div>
+
+        {/* RIGHT: Volume Output bar chart */}
+        <div style={CARD}>
+          <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>VOLUME OUTPUT</div>
+          <div style={{ height: '200px' }}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={VOLUME_DATA} barSize={30} margin={{ top: 4, right: 0, bottom: 20, left: -20 }}>
+                <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="day" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" />
+                <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 100]} ticks={[30, 50, 70, 100]} />
+                <Bar dataKey="v" fill="#22c55e" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
+
+      {/* BOTTOM ROW: Historical Focus Integrity (full width line chart) */}
+      <div style={CARD}>
+        <div style={{ fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '20px' }}>HISTORICAL FOCUS INTEGRITY</div>
+        <div style={{ height: '200px' }}>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={INTEGRITY_DATA} margin={{ top: 8, right: 20, bottom: 20, left: -20 }}>
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="d" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} interval={0} angle={-15} textAnchor="end" />
+              <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} domain={[30, 100]} ticks={[40, 50, 100]} />
+              <Tooltip
+                contentStyle={{ background: '#1a1a1a', border: '1px solid #374151', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
+                cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
+              />
+              <Line
+                type="monotone" dataKey="v" stroke="#f59e0b" strokeWidth={2}
+                dot={{ fill: '#f59e0b', r: 4, strokeWidth: 0 }}
+                activeDot={{ r: 6, fill: '#f59e0b' }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
     </div>
   );
 }

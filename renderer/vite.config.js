@@ -2,11 +2,21 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
+const BACKEND = 'http://127.0.0.1:39871'; // explicit IPv4 — avoids ECONNREFUSED on Node 18+
+const BACKEND_WS = 'ws://localhost:39871';
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    host: true,          // listen on 0.0.0.0 → accessible from LAN / mobile
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/api': {
+        target: BACKEND,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
   },
 })
