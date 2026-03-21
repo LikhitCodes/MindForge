@@ -31,13 +31,23 @@ const {
   getTagSessions,
   logTagSession,
   getTopGoal,
+  getDetailedTabAnalytics,
+  getDashboardStats,
+  getSessionHistory,
+  getMatrixTasks,
+  createMatrixTask,
+  updateMatrixTask,
+  deleteMatrixTask,
+  completeMatrixTask,
 } = require('./db');
 const { fetchDevToArticles } = require('./scraper');
 const { startScorer } = require('./scorer');
 const session = require('./session');
+const { google } = require('googleapis');
 
 const PORT = 39871;
 let wss = null;
+let currentDjangoWs = null;
 
 /**
  * Broadcast to all WebSocket clients
@@ -56,9 +66,14 @@ function broadcast(data) {
  * we relay it to Electron so the QR wait page transitions to active.
  */
 function startDjangoBridge(sessionId) {
-  if (!sessionId) return;
+  if (!sessionId) return null;
+  if (currentDjangoWs) {
+    try { currentDjangoWs.close(); } catch (_) {}
+    currentDjangoWs = null;
+  }
   try {
     const djangoWs = new (require('ws'))(`ws://127.0.0.1:8000/ws/session/${sessionId}/`);
+    currentDjangoWs = djangoWs;
     djangoWs.on('open', () => {
       console.log(`[Bridge] Connected to Django WS for session ${sessionId}`);
       // Identify as desktop so Django marks it connected
@@ -80,10 +95,13 @@ function startDjangoBridge(sessionId) {
         ) {
           broadcast(msg); // forward to all Express WS clients (Electron)
         }
-      } catch (_) {}
+      } catch (_) { }   
     });
     djangoWs.on('error', (e) => console.warn('[Bridge] Django WS error:', e.message));
-    djangoWs.on('close', () => console.log('[Bridge] Django WS closed'));
+    djangoWs.on('close', () => {
+      console.log('[Bridge] Django WS closed');
+      currentDjangoWs = null;
+    });
     return djangoWs;
   } catch (e) {
     console.warn('[Bridge] Could not start Django bridge:', e.message);
@@ -139,7 +157,7 @@ function startServer() {
     app.post('/ai-validate', async (req, res) => {
       const { appName } = req.body;
       if (!appName) return res.status(400).json({ error: 'AppName is required' });
-      
+
       try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -170,22 +188,22 @@ or
         });
 
         if (!response.ok) {
-           const errText = await response.text();
-           throw new Error(`Groq API error: ${response.status} ${errText}`);
+          const errText = await response.text();
+          throw new Error(`Groq API error: ${response.status} ${errText}`);
         }
         
         const data = await response.json();
         let content = data.choices[0].message.content;
-        
+
         // Safely extract JSON from markdown if model wrapped it
         const jsonStart = content.indexOf('{');
         const jsonEnd = content.lastIndexOf('}');
         if (jsonStart !== -1 && jsonEnd !== -1) {
           content = content.substring(jsonStart, jsonEnd + 1);
         }
-        
+
         const parsed = JSON.parse(content);
-        
+
         console.log(`[AI] Validated "${appName}": Productive=${parsed.isProductive} — ${parsed.reason}`);
         res.json(parsed);
       } catch (err) {
@@ -195,14 +213,73 @@ or
       }
     });
 
+    // ─── AI Task Auto-Classification ───
+    app.post('/ai-classify-tasks', async (req, res) => {
+      const { tasks } = req.body;
+      if (!tasks || !tasks.length) return res.json({ classifications: [] });
+      
+      try {
+        const apiKey = process.env.GROQ_API_KEY;
+        if (!apiKey) {
+           return res.json({ classifications: tasks.map(t => ({ id: t.id, quadrant: 'schedule', reason: 'Fallback' }))});
+        }
+        
+        const prompt = `You are a productivity AI organizing tasks into the Eisenhower Matrix.
+Categorize the following tasks into one of 4 quadrants: 'do_first' (Urgent & Important), 'schedule' (Not Urgent & Important), 'delegate' (Urgent & Not Important), 'eliminate' (Not Urgent & Not Important).
+Tasks:
+${tasks.map(t => `- [${t.id}] ${t.title}`).join('\n')}
+
+Reply strictly with a JSON object in this exact format:
+{"classifications": [{"id": "task_id", "quadrant": "do_first", "reason": "why"}]}
+Nothing else, just the JSON.`;
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1
+          })
+        });
+
+        const data = await response.json();
+        let content = data.choices[0].message.content;
+        const jsonStart = content.indexOf('{');
+        const jsonEnd = content.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          content = content.substring(jsonStart, jsonEnd + 1);
+        }
+        const parsed = JSON.parse(content);
+        
+        // Update DB
+        if (parsed.classifications) {
+          for (const cl of parsed.classifications) {
+            await updateMatrixTask(cl.id, { quadrant: cl.quadrant });
+          }
+        }
+        res.json({ ok: true, classifications: parsed.classifications });
+      } catch (err) {
+        console.error('[Server] AI classification error:', err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ═══════════════════════════════════════════
     //  SESSION ENDPOINTS (NEW)
     // ═══════════════════════════════════════════
 
     // Start a focus session
     app.post('/session/start', (req, res) => {
-      const { goal, mode, allowedApps, tagId } = req.body;
+      const { goal, mode, allowedApps, tagId, djangoId } = req.body;
       const info = session.startSession(goal || 'Focus Session', mode || 'basic', allowedApps || [], tagId);
+
+      if (djangoId) {
+        startDjangoBridge(djangoId);
+      }
 
       // Broadcast to UI
       broadcast({ type: 'session_started', ...info });
@@ -212,8 +289,11 @@ or
     // End the current session → push summary to Supabase
     app.post('/session/end', async (req, res) => {
       const summary = session.endSession();
-      if (!summary) {
-        return res.json({ ok: false, error: 'No active session' });
+      if (!summary) return res.json({ ok: false, error: 'No active session' });
+
+      if (currentDjangoWs) {
+        try { currentDjangoWs.close(); } catch (_) {}
+        currentDjangoWs = null;
       }
 
       // Push session summary to Supabase
@@ -253,9 +333,9 @@ or
 
           // Log to subject tag if applicable
           if (summary.tagId) {
-             const loggedMinutes = Math.max(1, summary.duration_minutes || summary.deep_work_minutes || 1);
-             const dateStr = new Date(summary.start_time).toISOString().slice(0, 10);
-             await logTagSession(summary.tagId, summary.id, loggedMinutes, dateStr);
+            const loggedMinutes = Math.max(1, summary.duration_minutes || summary.deep_work_minutes || 1);
+            const dateStr = new Date(summary.start_time).toISOString().slice(0, 10);
+            await logTagSession(summary.tagId, summary.id, loggedMinutes, dateStr);
           }
 
           console.log('[Server] Session summary saved to Supabase');
@@ -278,16 +358,36 @@ or
     //  DATA ENDPOINTS (Supabase)
     // ═══════════════════════════════════════════
 
+    // Track last browser event timestamp for elapsed time calculation
+    let lastBrowserEventTime = 0;
+    let lastBrowserHostname = '';
+
     app.post('/browser-event', async (req, res) => {
       try {
-        const { url, category, contentType } = req.body;
+        const { url, category, contentType, timestamp } = req.body;
+        const now = timestamp || Date.now();
+
         // During active session, add to session memory
         if (session.isActive()) {
           session.addEvent('chrome', 'Chrome', url, category || 'browser', false, contentType || 'text');
           try {
             const hostname = new URL(url).hostname;
-            // Accumulate URL visits locally (total active_seconds will be imperfect here, mostly driven by tab_analytics payload later)
-            session.addBrowserTab(hostname, url, category, contentType, 0); 
+
+            // Calculate elapsed seconds since last browser event on the SAME host
+            // Cap at 5 minutes to avoid inflated times from idle/unfocused periods
+            let elapsedSec = 0;
+            if (lastBrowserEventTime > 0 && lastBrowserHostname) {
+              const diff = Math.round((now - lastBrowserEventTime) / 1000);
+              if (diff > 0 && diff <= 300) { // max 5 min
+                // Attribute time to the PREVIOUS hostname (where user was)
+                session.addBrowserTab(lastBrowserHostname, '', category, contentType, diff);
+              }
+            }
+
+            // Record this visit (0 elapsed — time gets attributed on the NEXT event)
+            session.addBrowserTab(hostname, url, category, contentType, 0);
+            lastBrowserEventTime = now;
+            lastBrowserHostname = hostname;
           } catch (e) {
             // invalid URL parsing
           }
@@ -472,6 +572,40 @@ or
       }
     });
 
+    // ─── Detailed Tab Analytics ───
+    app.get('/analytics/tabs-detail', async (req, res) => {
+      try {
+        const days = parseInt(req.query.days) || 7;
+        const data = await getDetailedTabAnalytics(days);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ─── Dashboard Stats ───
+    app.get('/dashboard/stats', async (req, res) => {
+      try {
+        const range = req.query.range || 'week';
+        const data = await getDashboardStats(range);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ─── Session History ───
+    app.get('/sessions/history', async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = parseInt(req.query.offset) || 0;
+        const data = await getSessionHistory(limit, offset);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ═══════════════════════════════════════════
     //  SUBJECT TAGS ENDPOINTS
     // ═══════════════════════════════════════════
@@ -603,6 +737,176 @@ or
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
+    });
+
+    // ═══════════════════════════════════════════
+    //  EISENHOWER MATRIX ENDPOINTS
+    // ═══════════════════════════════════════════
+
+    app.get('/matrix', async (req, res) => {
+      try { res.json(await getMatrixTasks()); } 
+      catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.post('/matrix', async (req, res) => {
+      try {
+        const { title, quadrant, googleEventId } = req.body;
+        if (!title) return res.status(400).json({ error: 'Title required' });
+        const result = await createMatrixTask(title, quadrant || 'inbox', googleEventId);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.put('/matrix/:id', async (req, res) => {
+      try {
+        const result = await updateMatrixTask(req.params.id, req.body);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.delete('/matrix/:id', async (req, res) => {
+      try {
+        const result = await deleteMatrixTask(req.params.id);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.post('/matrix/:id/complete', async (req, res) => {
+      try {
+        const result = await completeMatrixTask(req.params.id);
+        if (result.error) return res.status(500).json({ error: result.error });
+        
+        // Sync to google calendar if authenticated
+        if (global.googleTokens && process.env.GOOGLE_CLIENT_ID && result.data?.google_event_id && !result.data.title.startsWith('[DONE]')) {
+          const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+          oauth2Client.setCredentials(global.googleTokens);
+          const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+          try {
+            await calendar.events.patch({
+              calendarId: 'primary',
+              eventId: result.data.google_event_id,
+              requestBody: { summary: `[DONE] ${result.data.title}` }
+            });
+            console.log(`[Google Calendar] Marked event ${result.data.google_event_id} as done.`);
+          } catch (calErr) {
+            console.error('[Google Calendar] Failed to mark event as done:', calErr.message);
+          }
+        }
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ═══════════════════════════════════════════
+    //  GOOGLE CALENDAR ENDPOINTS
+    // ═══════════════════════════════════════════
+    
+    app.get('/calendar/auth-url', (req, res) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      if (!clientId || !clientSecret) return res.json({ url: null });
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, 'http://localhost:39871/calendar/callback');
+      const url = oauth2Client.generateAuthUrl({
+        access_type: 'offline', prompt: 'consent',
+        scope: ['https://www.googleapis.com/auth/calendar.events']
+      });
+      res.json({ url });
+    });
+    
+    app.get('/calendar/callback', async (req, res) => {
+      const { code } = req.query;
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      try {
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, 'http://localhost:39871/calendar/callback');
+        const { tokens } = await oauth2Client.getToken(code);
+        global.googleTokens = tokens;
+        res.send('<h1 style="color:#22c55e;font-family:sans-serif;margin-top:20%;text-align:center">MindForge Calendar Sync Successful</h1><p style="text-align:center">You can close this tab now and return to the app.</p>');
+      } catch (err) {
+        res.status(500).send('<h1 style="color:#ef4444;font-family:sans-serif;margin-top:20%;text-align:center">Authentication failed</h1><p style="text-align:center">' + err.message + '</p>');
+      }
+    });
+
+    app.get('/calendar/status', (req, res) => {
+      res.json({ authenticated: !!global.googleTokens });
+    });
+    
+    app.post('/calendar/sync', async (req, res) => {
+      if (!global.googleTokens) return res.status(401).json({ error: 'Not authenticated with Google' });
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials(global.googleTokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      try {
+        const response = await calendar.events.list({
+          calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 15,
+          singleEvents: true, orderBy: 'startTime',
+        });
+        const events = response.data.items;
+        let syncedCount = 0;
+        
+        // Fetch existing task google event IDs so we don't duplicate
+        const existingTasks = await getMatrixTasks();
+        const existingEventIds = existingTasks.map(t => t.google_event_id).filter(Boolean);
+
+        for (const event of events) {
+          if (event.summary && !existingEventIds.includes(event.id) && !event.summary.startsWith('[DONE]')) {
+            await createMatrixTask(event.summary, 'inbox', event.id);
+            syncedCount++;
+          }
+        }
+        res.json({ ok: true, syncedCount });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.post('/calendar/export', async (req, res) => {
+      if (!global.googleTokens) return res.status(401).json({ error: 'Not authenticated' });
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials(global.googleTokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      try {
+        const tasks = await getMatrixTasks();
+        // Export only 'schedule' and 'do_first' tasks that aren't completed and aren't already linked
+        const exportTasks = tasks.filter(t => !t.completed && !t.google_event_id && (t.quadrant === 'schedule' || t.quadrant === 'do_first'));
+        
+        let exportedCount = 0;
+        
+        // Start scheduling for tomorrow 9 AM
+        let startTime = new Date();
+        startTime.setDate(startTime.getDate() + 1);
+        startTime.setHours(9, 0, 0, 0);
+
+        for (const task of exportTasks) {
+          const endTime = new Date(startTime.getTime() + 60 * 60 * 1000); // 1 hour later
+          
+          const event = await calendar.events.insert({
+            calendarId: 'primary',
+            requestBody: {
+              summary: task.title,
+              description: `MindForge - ${task.quadrant === 'do_first' ? 'Urgent & Important Priority' : 'Scheduled Deep Work'}`,
+              start: { dateTime: startTime.toISOString() },
+              end: { dateTime: endTime.toISOString() },
+            }
+          });
+          
+          if (event.data && event.data.id) {
+            await updateMatrixTask(task.id, { google_event_id: event.data.id });
+            exportedCount++;
+            // Increment start time by 1 hour for the next task
+            startTime = endTime;
+          }
+        }
+        res.json({ ok: true, exportedCount });
+      } catch (err) { res.status(500).json({ error: err.message }); }
     });
 
     // ─── HTTP + WebSocket server ───

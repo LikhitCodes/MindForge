@@ -15,15 +15,17 @@ import DistractionShield from './components/DistractionShield';
 import AmbientPlayer from './components/AmbientPlayer';
 import AuthPage from './components/AuthPage';
 import TagsManager from './components/TagsManager';
+import EisenhowerMatrix from './components/EisenhowerMatrix';
 
 const MAIN_NAV = [
-  { label: 'Dashboard', path: '/' },
+  { label: 'Home', path: '/' },
   { label: 'Session', path: '/session' },
   { label: 'Pomodoro', path: '/pomodoro' },
   { label: 'Habits', path: '/habits' },
   { label: 'Analytics', path: '/analytics' },
   { label: 'Adaptive Learning', path: 'http://localhost:5173/', external: true },
   { label: 'Tags', path: '/tags' },
+  { label: 'Matrix', path: '/matrix' },
   { label: 'Focus Room', path: '/room' },
 ];
 
@@ -123,6 +125,7 @@ export default function App() {
           <Route path="/habits" element={<DailyHabits />} />
           <Route path="/analytics" element={<AnalyticsDashboard />} />
           <Route path="/tags" element={<TagsManager />} />
+          <Route path="/matrix" element={<EisenhowerMatrix />} />
           <Route path="/room" element={<FocusRoom />} />
         </Routes>
       </div>

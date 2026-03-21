@@ -26,10 +26,10 @@ async function apiFetch(path, options = {}) {
 // ─── Session ─────────────────────────────────────────────
 export const sessionApi = {
   /** Start a new session, returns { id, startTime, goal, mode, allowedApps } */
-  start: (goal, mode, allowedApps, tagId = null) =>
+  start: (goal, mode, allowedApps, tagId = null, djangoId = null) =>
     apiFetch('/session/start', {
       method: 'POST',
-      body: JSON.stringify({ goal, mode, allowedApps, tagId }),
+      body: JSON.stringify({ goal, mode, allowedApps, tagId, djangoId }),
     }),
 
   /** End the current session, returns { ok, summary } */
@@ -45,6 +45,8 @@ export const dashboardApi = {
   ramp:    () => apiFetch('/ramp'),
   debt:    () => apiFetch('/debt'),
   heatmap: () => apiFetch('/scores/heatmap'),
+  stats:   (range = 'week') => apiFetch(`/dashboard/stats?range=${range}`),
+  sessions: (limit = 20, offset = 0) => apiFetch(`/sessions/history?limit=${limit}&offset=${offset}`),
 };
 
 // ─── Analytics ───────────────────────────────────────────
@@ -53,6 +55,12 @@ export const analyticsApi = {
   timeBreakdown: (days = 7) => apiFetch(`/analytics/time-breakdown?days=${days}`),
   studyHabits: () => apiFetch('/analytics/study-habits'),
   topGoal: () => apiFetch('/analytics/top-goal'),
+  tabsDetail: (days = 7) => apiFetch(`/analytics/tabs-detail?days=${days}`),
+  perSite: (days = 7, category = null) => {
+    let url = `/analytics/per-site?days=${days}`;
+    if (category) url += `&category=${category}`;
+    return apiFetch(url);
+  },
 };
 
 // ─── Habits ──────────────────────────────────────────────
@@ -70,6 +78,29 @@ export const tagsApi = {
   getAll: () => apiFetch('/tags'),
   create: (tagData) => apiFetch('/tags', { method: 'POST', body: JSON.stringify(tagData) }),
   getSessions: (tagId, days = 30) => apiFetch(`/tags/${tagId}/sessions?days=${days}`),
+};
+
+// ─── Eisenhower Matrix ───────────────────────────────────
+export const matrixApi = {
+  getTasks: () => apiFetch('/matrix'),
+  createTask: (title, quadrant = 'inbox', googleEventId = null) =>
+    apiFetch('/matrix', { method: 'POST', body: JSON.stringify({ title, quadrant, googleEventId }) }),
+  updateTask: (id, updates) =>
+    apiFetch(`/matrix/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteTask: (id) =>
+    apiFetch(`/matrix/${id}`, { method: 'DELETE' }),
+  completeTask: (id) =>
+    apiFetch(`/matrix/${id}/complete`, { method: 'POST' }),
+  autoClassify: (tasks) => 
+    apiFetch('/ai-classify-tasks', { method: 'POST', body: JSON.stringify({ tasks }) }),
+};
+
+// ─── Google Calendar ─────────────────────────────────────
+export const calendarApi = {
+  getStatus: () => apiFetch('/calendar/status'),
+  getAuthUrl: () => apiFetch('/calendar/auth-url'),
+  sync: () => apiFetch('/calendar/sync', { method: 'POST' }),
+  export: () => apiFetch('/calendar/export', { method: 'POST' }),
 };
 
 // ─── AI validation (for permit apps) ─────────────────────
