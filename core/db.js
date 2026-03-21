@@ -233,7 +233,7 @@ async function updateHabit(date, habit, done) {
 
   // Upsert: insert if not exists, update if exists
   const existing = await getDailyHabits(date);
-  const updateData = { ...existing, date, [column]: done };
+  const updateData = { ...existing, date, [column]: done, user_id: currentUserId };
 
   const { error } = await supabase
     .from('daily_habits')
@@ -284,7 +284,8 @@ async function updateStreak(date) {
 async function insertTabAnalytics(entries) {
   if (!supabase || !entries || entries.length === 0) return;
 
-  const { error } = await supabase.from('tab_analytics').insert(entries);
+  const rows = entries.map(e => ({ ...e, user_id: currentUserId }));
+  const { error } = await supabase.from('tab_analytics').insert(rows);
   if (error) console.error('[DB] insertTabAnalytics error:', error.message);
 }
 
@@ -413,6 +414,7 @@ async function insertSessionSites(sessionId, sites, date) {
     visits: site.visits || 1,
     date: date || new Date().toISOString().slice(0, 10),
     timestamp: Date.now(),
+    user_id: currentUserId,
   }));
 
   const { error } = await supabase.from('session_sites').insert(rows);
@@ -608,6 +610,213 @@ async function getTodaySummary() {
 }
 
 // ═══════════════════════════════════════
+//  SUBJECT TAGS & STREAKS FUNCTIONS
+// ═══════════════════════════════════════
+
+/**
+ * Helper to get the start of the current week (Monday)
+ */
+function getStartOfWeek(dateStr) {
+  const d = new Date(dateStr);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+  d.setDate(diff);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Helper to check if a date string is before yesterday (for daily)
+ * or before last week (for weekly)
+ */
+function isStreakBroken(lastStreakDate, targetType, todayStr) {
+  if (!lastStreakDate) return false;
+  
+  const today = new Date(todayStr);
+  today.setHours(0, 0, 0, 0);
+  
+  const last = new Date(lastStreakDate);
+  last.setHours(0, 0, 0, 0);
+  
+  const daysDiff = Math.floor((today - last) / (1000 * 60 * 60 * 24));
+  
+  if (targetType === 'daily') {
+    return daysDiff > 1; // missed yesterday
+  } else if (targetType === 'weekly') {
+    // Check if the start of last streak's week is more than 1 week ago from today's week
+    const lastWeekStart = new Date(getStartOfWeek(lastStreakDate));
+    const thisWeekStart = new Date(getStartOfWeek(todayStr));
+    const weekDiff = Math.floor((thisWeekStart - lastWeekStart) / (1000 * 60 * 60 * 24 * 7));
+    return weekDiff > 1; // missed last week
+  }
+  return false;
+}
+
+/**
+ * Creates a new subject tag
+ */
+async function createTag(name, color, targetMinutes, targetType) {
+  if (!supabase || !currentUserId) return { error: 'DB not ready' };
+
+  const { data, error } = await supabase.from('tags').insert({
+    user_id: currentUserId,
+    name,
+    color: color || '#22c55e',
+    target_minutes: targetMinutes,
+    target_type: targetType // 'daily' or 'weekly'
+  }).select().single();
+
+  if (error) {
+    console.error('[DB] createTag error:', error.message);
+    return { error: error.message };
+  }
+  return { data };
+}
+
+/**
+ * Get all tags for the current user, updating streaks if broken
+ */
+async function getTags() {
+  if (!supabase || !currentUserId) return [];
+
+  const { data, error } = await supabase
+    .from('tags')
+    .select('*')
+    .eq('user_id', currentUserId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[DB] getTags error:', error.message);
+    return [];
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const updatedTags = [];
+
+  // Check for broken streaks and update
+  for (const tag of data || []) {
+    let modified = false;
+    let newStreak = tag.current_streak;
+
+    if (tag.current_streak > 0 && isStreakBroken(tag.last_streak_date, tag.target_type, todayStr)) {
+      newStreak = 0;
+      modified = true;
+    }
+
+    if (modified) {
+      await supabase.from('tags').update({ current_streak: newStreak }).eq('id', tag.id);
+      tag.current_streak = newStreak;
+    }
+    
+    // Fetch today's / this week's logged minutes
+    let rangeStart = todayStr;
+    if (tag.target_type === 'weekly') {
+      rangeStart = getStartOfWeek(todayStr);
+    }
+    
+    const { data: logs } = await supabase
+      .from('tag_sessions')
+      .select('minutes_logged')
+      .eq('tag_id', tag.id)
+      .gte('date', rangeStart);
+      
+    const loggedMinutes = (logs || []).reduce((sum, row) => sum + (row.minutes_logged || 0), 0);
+    tag.logged_minutes = loggedMinutes;
+
+    updatedTags.push(tag);
+  }
+
+  return updatedTags;
+}
+
+/**
+ * Get all session logs for a tag (for 30 day contribution grid)
+ */
+async function getTagSessions(tagId, days = 30) {
+  if (!supabase || !currentUserId) return [];
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('tag_sessions')
+    .select('date, minutes_logged')
+    .eq('tag_id', tagId)
+    .gte('date', since)
+    .order('date', { ascending: true });
+
+  if (error) {
+    console.error('[DB] getTagSessions error:', error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+/**
+ * Log a session to a tag and update streaks
+ */
+async function logTagSession(tagId, sessionId, minutesLogged, date) {
+  if (!supabase || !currentUserId || !tagId || minutesLogged === undefined || minutesLogged === null) return;
+
+  // Insert session log
+  const { error: insertErr } = await supabase.from('tag_sessions').insert({
+    tag_id: tagId,
+    user_id: currentUserId,
+    session_id: sessionId,
+    minutes_logged: minutesLogged,
+    date: date
+  });
+
+  if (insertErr) {
+    console.error('[DB] logTagSession insert error:', insertErr.message);
+    return;
+  }
+
+  // Update streaks logic
+  const { data: tag, error: tagErr } = await supabase.from('tags').select('*').eq('id', tagId).single();
+  if (tagErr || !tag) return;
+
+  const todayStr = date;
+  
+  // Calculate total logged in the target window (today or this week)
+  let rangeStart = todayStr;
+  if (tag.target_type === 'weekly') rangeStart = getStartOfWeek(todayStr);
+  
+  const { data: logs } = await supabase
+    .from('tag_sessions')
+    .select('minutes_logged')
+    .eq('tag_id', tagId)
+    .gte('date', rangeStart);
+    
+  const totalLogged = (logs || []).reduce((sum, row) => sum + (row.minutes_logged || 0), 0);
+
+  // If target is met
+  if (totalLogged >= tag.target_minutes) {
+    // Avoid double counting streak for the same target window
+    let periodIdentified = tag.target_type === 'daily' ? todayStr : getStartOfWeek(todayStr);
+    let lastPeriodIdentified = tag.last_streak_date 
+      ? (tag.target_type === 'daily' ? tag.last_streak_date : getStartOfWeek(tag.last_streak_date))
+      : null;
+
+    if (periodIdentified !== lastPeriodIdentified) {
+      // Streak increments!
+      let newStreak = tag.current_streak + 1;
+      
+      // But wait! Was it already broken?
+      if (isStreakBroken(tag.last_streak_date, tag.target_type, todayStr)) {
+        newStreak = 1; 
+      }
+      
+      const longestStreak = Math.max(tag.longest_streak, newStreak);
+      
+      await supabase.from('tags').update({
+        current_streak: newStreak,
+        longest_streak: longestStreak,
+        last_streak_date: todayStr
+      }).eq('id', tag.id);
+    }
+  }
+}
+
+// ═══════════════════════════════════════
 //  FOCUS ROOM FUNCTIONS
 // ═══════════════════════════════════════
 
@@ -774,4 +983,9 @@ module.exports = {
   getRoomMembers,
   updateMemberStatus,
   getUserActiveRoom,
+  // Tags
+  createTag,
+  getTags,
+  getTagSessions,
+  logTagSession,
 };

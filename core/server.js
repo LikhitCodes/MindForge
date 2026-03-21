@@ -10,6 +10,7 @@ const {
   getDailyHabits,
   updateHabit,
   getDB,
+  getUserId,
   insertTabAnalytics,
   getContentPreferences,
   getTimeBreakdownDB,
@@ -27,6 +28,10 @@ const {
   getRoomMembers,
   updateMemberStatus,
   getUserActiveRoom,
+  createTag,
+  getTags,
+  getTagSessions,
+  logTagSession,
 } = require('./db');
 const { startScorer } = require('./scorer');
 const session = require('./session');
@@ -120,8 +125,13 @@ function startServer() {
           }
         }
       }
-      // Prefer Wi-Fi / Ethernet (not 192.168.137.x which is usually hotspot)
-      const preferred = ips.find(i => !i.address.startsWith('192.168.137')) || ips[0];
+      // Prefer Wi-Fi / Ethernet - explicitly ignore Virtual, WSL, and Hotspot adapters
+      const preferred = ips.find(i => {
+        const lowerName = i.name.toLowerCase();
+        const isVirtual = lowerName.includes('wsl') || lowerName.includes('vethernet') || lowerName.includes('virtual') || lowerName.includes('vmware');
+        const isHotspot = i.address.startsWith('192.168.137');
+        return !isVirtual && !isHotspot;
+      }) || ips[0];
       res.json({ ips, preferred: preferred?.address || 'localhost' });
     });
 
@@ -191,8 +201,8 @@ or
 
     // Start a focus session
     app.post('/session/start', (req, res) => {
-      const { goal, mode, allowedApps } = req.body;
-      const info = session.startSession(goal || 'Focus Session', mode || 'basic', allowedApps || []);
+      const { goal, mode, allowedApps, tagId } = req.body;
+      const info = session.startSession(goal || 'Focus Session', mode || 'basic', allowedApps || [], tagId);
 
       // Broadcast to UI
       broadcast({ type: 'session_started', ...info });
@@ -212,6 +222,7 @@ or
         if (supabase) {
           await supabase.from('sessions').upsert({
             id: summary.id,
+            user_id: getUserId(),
             start_time: summary.start_time,
             end_time: summary.end_time,
             goal: summary.goal,
@@ -230,6 +241,7 @@ or
 
           // Also push the final score
           await supabase.from('scores').insert({
+            user_id: getUserId(),
             timestamp: Date.now(),
             score: summary.avg_score,
           });
@@ -237,6 +249,13 @@ or
           // Save accrued per-site browser tracking
           if (summary.browserTabs && summary.browserTabs.length > 0) {
             await insertSessionSites(summary.id, summary.browserTabs);
+          }
+
+          // Log to subject tag if applicable
+          if (summary.tagId) {
+             const loggedMinutes = Math.max(1, summary.duration_minutes || summary.deep_work_minutes || 1);
+             const dateStr = new Date(summary.start_time).toISOString().slice(0, 10);
+             await logTagSession(summary.tagId, summary.id, loggedMinutes, dateStr);
           }
 
           console.log('[Server] Session summary saved to Supabase');
@@ -425,6 +444,43 @@ or
     app.get('/summary/today', async (req, res) => {
       try {
         const data = await getTodaySummary();
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ═══════════════════════════════════════════
+    //  SUBJECT TAGS ENDPOINTS
+    // ═══════════════════════════════════════════
+
+    app.get('/tags', async (req, res) => {
+      try {
+        const data = await getTags();
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post('/tags', async (req, res) => {
+      try {
+        const { name, color, targetMinutes, targetType } = req.body;
+        if (!name || !targetMinutes || !targetType) {
+          return res.status(400).json({ error: 'Missing required tag fields' });
+        }
+        const result = await createTag(name, color, targetMinutes, targetType);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true, tag: result.data });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.get('/tags/:id/sessions', async (req, res) => {
+      try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await getTagSessions(req.params.id, days);
         res.json(data);
       } catch (err) {
         res.status(500).json({ error: err.message });

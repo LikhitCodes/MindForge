@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { sessionApi, useWebSocket, aiApi, systemApi, djangoApi } from '../api';
+import { sessionApi, useWebSocket, aiApi, systemApi, djangoApi, tagsApi } from '../api';
 
 /* ─── CSS animations ─────────────────────────────────── */
 const SPINNER_CSS = `
@@ -58,7 +58,7 @@ const CARD = { background: '#111111', borderRadius: '16px', padding: '28px', bor
 /* ═══════════════════════════════════════════════════════
    STATE 1 — Initialize Core
    ═══════════════════════════════════════════════════════ */
-function InitPage({ goal, setGoal, mode, setMode, apps, setApps, onBoot, booting }) {
+function InitPage({ goal, setGoal, mode, setMode, apps, setApps, tagId, setTagId, tags, onBoot, booting }) {
   const [newApp, setNewApp] = useState('');
   const [aiChecking, setAiChecking] = useState(false);
   const [aiMsg, setAiMsg] = useState('');
@@ -102,6 +102,15 @@ function InitPage({ goal, setGoal, mode, setMode, apps, setApps, onBoot, booting
             </button>
           ))}
         </div>
+
+        <label style={{ color: '#9ca3af', fontSize: '14px', display: 'block', marginTop: '20px', marginBottom: '10px' }}>Subject Tag (Optional):</label>
+        <select value={tagId || ''} onChange={e => setTagId(e.target.value || null)}
+          style={{ width: '100%', height: '48px', background: '#1a1a1a', border: '1px solid #2d2d2d', borderRadius: '10px', padding: '0 16px', color: '#fff', fontSize: '15px', outline: 'none', appearance: 'none', cursor: 'pointer' }}>
+          <option value="">-- No specific tag --</option>
+          {tags.map(t => (
+            <option key={t.id} value={t.id}>{t.name} ({t.target_minutes}m/{t.target_type})</option>
+          ))}
+        </select>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', marginBottom: '10px' }}>
           <label style={{ color: '#9ca3af', fontSize: '14px' }}>Permit apps:</label>
@@ -502,6 +511,8 @@ export default function Session() {
   const [goal, setGoal] = useState('');
   const [mode, setMode] = useState('basic');
   const [apps, setApps] = useState(['chrome', 'vscode']);
+  const [tagId, setTagId] = useState(null);
+  const [tags, setTags] = useState([]);
   const [sessionId, setSessionId] = useState(null);   // Express UUID session
   const [djangoSessionId, setDjangoSessionId] = useState(null); // Django 6-char session
   const [pwaUrl, setPwaUrl] = useState(null);          // Full PWA URL for QR (from Django)
@@ -512,6 +523,10 @@ export default function Session() {
   useEffect(() => {
     systemApi.networkInfo()
       .then(info => setPcIp(info.preferred))
+      .catch(() => {});
+
+    tagsApi.getAll()
+      .then(data => setTags(data || []))
       .catch(() => {});
 
     sessionApi.status().then(status => {
@@ -563,7 +578,7 @@ export default function Session() {
 
       // ── Step 3: create Express session (for Supabase + desktop watcher) ──
       try {
-        const result = await sessionApi.start(goal, mode, apps);
+        const result = await sessionApi.start(goal, mode, apps, tagId);
         setSessionId(result.session?.id || result.id || null);
       } catch (err) {
         console.warn('[Session] Express session start error:', err.message);
@@ -596,6 +611,7 @@ export default function Session() {
           goal={goal} setGoal={setGoal}
           mode={mode} setMode={setMode}
           apps={apps} setApps={setApps}
+          tagId={tagId} setTagId={setTagId} tags={tags}
           onBoot={handleBoot} booting={booting}
         />
       )}

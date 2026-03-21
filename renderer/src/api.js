@@ -26,10 +26,10 @@ async function apiFetch(path, options = {}) {
 // ─── Session ─────────────────────────────────────────────
 export const sessionApi = {
   /** Start a new session, returns { id, startTime, goal, mode, allowedApps } */
-  start: (goal, mode, allowedApps) =>
+  start: (goal, mode, allowedApps, tagId = null) =>
     apiFetch('/session/start', {
       method: 'POST',
-      body: JSON.stringify({ goal, mode, allowedApps }),
+      body: JSON.stringify({ goal, mode, allowedApps, tagId }),
     }),
 
   /** End the current session, returns { ok, summary } */
@@ -62,6 +62,13 @@ export const habitsApi = {
   },
   complete: (habit) =>
     apiFetch('/habit-complete', { method: 'POST', body: JSON.stringify({ habit }) }),
+};
+
+// ─── Tags ────────────────────────────────────────────────
+export const tagsApi = {
+  getAll: () => apiFetch('/tags'),
+  create: (tagData) => apiFetch('/tags', { method: 'POST', body: JSON.stringify(tagData) }),
+  getSessions: (tagId, days = 30) => apiFetch(`/tags/${tagId}/sessions?days=${days}`),
 };
 
 // ─── AI validation (for permit apps) ─────────────────────
