@@ -15,6 +15,7 @@ const TIER1_DISTRACTIONS = [
   'pinterest.com',
   'tumblr.com',
   '9gag.com',
+  'whatsapp.com',
 ];
 
 const DEFAULT_TIER2_PRODUCTIVE = [

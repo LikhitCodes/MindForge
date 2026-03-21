@@ -143,21 +143,24 @@ function addEvent(source, appName, url, category, isIdle = false, contentType = 
 function addBrowserTab(hostname, url, category, contentType, elapsedSec = 0) {
   if (!currentSession || !hostname) return;
 
-  const key = hostname.replace(/^www\./, '');
+  const cleanHost = hostname.replace(/^www\./, '');
+  const cat = category || 'neutral';
+  const key = `${cleanHost}|${cat}`;
+  
   const existing = currentSession.browserTabs[key];
 
   if (existing) {
-    // Update category/contentType to latest classification
-    existing.category = category || existing.category;
+    // Update contentType to latest classification (time accumulates per category)
     existing.contentType = contentType || existing.contentType;
     existing.active_seconds += elapsedSec;
     existing.visits += 1;
+    // Don't modify category since the key enforces the split
     existing.lastSeen = Date.now();
   } else {
     currentSession.browserTabs[key] = {
-      hostname: key,
+      hostname: cleanHost,
       url: url || '',
-      category: category || 'neutral',
+      category: cat,
       contentType: contentType || 'text',
       active_seconds: elapsedSec,
       visits: 1,

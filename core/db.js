@@ -410,13 +410,13 @@ async function getPerSiteAnalytics(days = 7, category = null) {
     return [];
   }
 
-  // Aggregate by hostname
+  // Aggregate by hostname AND category
   const siteMap = {};
   (data || []).forEach(row => {
-    const key = row.hostname;
+    const key = `${row.hostname}|${row.category}`;
     if (!siteMap[key]) {
       siteMap[key] = {
-        hostname: key,
+        hostname: row.hostname,
         category: row.category,
         content_type: row.content_type,
         total_seconds: 0,
@@ -425,8 +425,7 @@ async function getPerSiteAnalytics(days = 7, category = null) {
     }
     siteMap[key].total_seconds += row.active_seconds || 0;
     siteMap[key].total_visits += row.visits || 1;
-    // Use most recent classification (last write wins per aggregation)
-    siteMap[key].category = row.category;
+    // Update content type to most recent
     siteMap[key].content_type = row.content_type;
   });
 
