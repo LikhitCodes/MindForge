@@ -1068,6 +1068,47 @@ async function getUserActiveRoom() {
   return data?.room_id || null;
 }
 
+// ═══════════════════════════════════════
+//  EISENHOWER MATRIX FUNCTIONS
+// ═══════════════════════════════════════
+
+async function getMatrixTasks() {
+  if (!supabase || !currentUserId) return [];
+  const { data, error } = await supabase.from('eisenhower_tasks')
+    .select('*').eq('user_id', currentUserId).order('created_at', { ascending: false });
+  if (error) { console.error('[DB] getMatrixTasks error:', error.message); return []; }
+  return data || [];
+}
+
+async function createMatrixTask(title, quadrant = 'inbox', googleEventId = null) {
+  if (!supabase || !currentUserId) return { error: 'DB not ready' };
+  const { data, error } = await supabase.from('eisenhower_tasks').insert({
+    user_id: currentUserId, title, quadrant, google_event_id: googleEventId
+  }).select().single();
+  if (error) return { error: error.message };
+  return { data };
+}
+
+async function updateMatrixTask(id, updates) {
+  if (!supabase || !currentUserId) return { error: 'DB not ready' };
+  const { data, error } = await supabase.from('eisenhower_tasks').update(updates)
+    .eq('id', id).eq('user_id', currentUserId).select().single();
+  if (error) return { error: error.message };
+  return { data };
+}
+
+async function deleteMatrixTask(id) {
+  if (!supabase || !currentUserId) return { error: 'DB not ready' };
+  const { error } = await supabase.from('eisenhower_tasks')
+    .delete().eq('id', id).eq('user_id', currentUserId);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+async function completeMatrixTask(id) {
+  return updateMatrixTask(id, { completed: true });
+}
+
 module.exports = {
   initDB,
   getDB,
@@ -1106,4 +1147,9 @@ module.exports = {
   getTags,
   getTagSessions,
   logTagSession,
+  getMatrixTasks,
+  createMatrixTask,
+  updateMatrixTask,
+  deleteMatrixTask,
+  completeMatrixTask,
 };

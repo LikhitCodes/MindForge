@@ -79,6 +79,28 @@ export const tagsApi = {
   getSessions: (tagId, days = 30) => apiFetch(`/tags/${tagId}/sessions?days=${days}`),
 };
 
+// ─── Eisenhower Matrix ───────────────────────────────────
+export const matrixApi = {
+  getTasks: () => apiFetch('/matrix'),
+  createTask: (title, quadrant = 'inbox', googleEventId = null) =>
+    apiFetch('/matrix', { method: 'POST', body: JSON.stringify({ title, quadrant, googleEventId }) }),
+  updateTask: (id, updates) =>
+    apiFetch(`/matrix/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteTask: (id) =>
+    apiFetch(`/matrix/${id}`, { method: 'DELETE' }),
+  completeTask: (id) =>
+    apiFetch(`/matrix/${id}/complete`, { method: 'POST' }),
+  autoClassify: (tasks) => 
+    apiFetch('/ai-classify-tasks', { method: 'POST', body: JSON.stringify({ tasks }) }),
+};
+
+// ─── Google Calendar ─────────────────────────────────────
+export const calendarApi = {
+  getStatus: () => apiFetch('/calendar/status'),
+  getAuthUrl: () => apiFetch('/calendar/auth-url'),
+  sync: () => apiFetch('/calendar/sync', { method: 'POST' }),
+};
+
 // ─── AI validation (for permit apps) ─────────────────────
 export const aiApi = {
   validateApp: (appName) =>

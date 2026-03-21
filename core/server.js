@@ -35,9 +35,15 @@ const {
   getDetailedTabAnalytics,
   getDashboardStats,
   getSessionHistory,
+  getMatrixTasks,
+  createMatrixTask,
+  updateMatrixTask,
+  deleteMatrixTask,
+  completeMatrixTask,
 } = require('./db');
 const { startScorer } = require('./scorer');
 const session = require('./session');
+const { google } = require('googleapis');
 
 const PORT = 39871;
 let wss = null;
@@ -195,6 +201,61 @@ or
         console.error('[Server] AI validation error:', err.message);
         // Fallback to allow if API fails
         res.json({ isProductive: true, reason: 'AI fallback allowed' });
+      }
+    });
+
+    // ─── AI Task Auto-Classification ───
+    app.post('/ai-classify-tasks', async (req, res) => {
+      const { tasks } = req.body;
+      if (!tasks || !tasks.length) return res.json({ classifications: [] });
+      
+      try {
+        const apiKey = process.env.GROQ_API_KEY;
+        if (!apiKey) {
+           return res.json({ classifications: tasks.map(t => ({ id: t.id, quadrant: 'schedule', reason: 'Fallback' }))});
+        }
+        
+        const prompt = `You are a productivity AI organizing tasks into the Eisenhower Matrix.
+Categorize the following tasks into one of 4 quadrants: 'do_first' (Urgent & Important), 'schedule' (Not Urgent & Important), 'delegate' (Urgent & Not Important), 'eliminate' (Not Urgent & Not Important).
+Tasks:
+${tasks.map(t => `- [${t.id}] ${t.title}`).join('\n')}
+
+Reply strictly with a JSON object in this exact format:
+{"classifications": [{"id": "task_id", "quadrant": "do_first", "reason": "why"}]}
+Nothing else, just the JSON.`;
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1
+          })
+        });
+
+        const data = await response.json();
+        let content = data.choices[0].message.content;
+        const jsonStart = content.indexOf('{');
+        const jsonEnd = content.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          content = content.substring(jsonStart, jsonEnd + 1);
+        }
+        const parsed = JSON.parse(content);
+        
+        // Update DB
+        if (parsed.classifications) {
+          for (const cl of parsed.classifications) {
+            await updateMatrixTask(cl.id, { quadrant: cl.quadrant });
+          }
+        }
+        res.json({ ok: true, classifications: parsed.classifications });
+      } catch (err) {
+        console.error('[Server] AI classification error:', err.message);
+        res.status(500).json({ error: err.message });
       }
     });
 
@@ -638,6 +699,131 @@ or
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
+    });
+
+    // ═══════════════════════════════════════════
+    //  EISENHOWER MATRIX ENDPOINTS
+    // ═══════════════════════════════════════════
+
+    app.get('/matrix', async (req, res) => {
+      try { res.json(await getMatrixTasks()); } 
+      catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.post('/matrix', async (req, res) => {
+      try {
+        const { title, quadrant, googleEventId } = req.body;
+        if (!title) return res.status(400).json({ error: 'Title required' });
+        const result = await createMatrixTask(title, quadrant || 'inbox', googleEventId);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.put('/matrix/:id', async (req, res) => {
+      try {
+        const result = await updateMatrixTask(req.params.id, req.body);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.delete('/matrix/:id', async (req, res) => {
+      try {
+        const result = await deleteMatrixTask(req.params.id);
+        if (result.error) return res.status(500).json({ error: result.error });
+        res.json({ ok: true });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    app.post('/matrix/:id/complete', async (req, res) => {
+      try {
+        const result = await completeMatrixTask(req.params.id);
+        if (result.error) return res.status(500).json({ error: result.error });
+        
+        // Sync to google calendar if authenticated
+        if (global.googleTokens && process.env.GOOGLE_CLIENT_ID && result.data?.google_event_id && !result.data.title.startsWith('[DONE]')) {
+          const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+          oauth2Client.setCredentials(global.googleTokens);
+          const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+          try {
+            await calendar.events.patch({
+              calendarId: 'primary',
+              eventId: result.data.google_event_id,
+              requestBody: { summary: `[DONE] ${result.data.title}` }
+            });
+            console.log(`[Google Calendar] Marked event ${result.data.google_event_id} as done.`);
+          } catch (calErr) {
+            console.error('[Google Calendar] Failed to mark event as done:', calErr.message);
+          }
+        }
+        res.json({ ok: true, task: result.data });
+      } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ═══════════════════════════════════════════
+    //  GOOGLE CALENDAR ENDPOINTS
+    // ═══════════════════════════════════════════
+    
+    app.get('/calendar/auth-url', (req, res) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      if (!clientId || !clientSecret) return res.json({ url: null });
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, 'http://localhost:39871/calendar/callback');
+      const url = oauth2Client.generateAuthUrl({
+        access_type: 'offline', prompt: 'consent',
+        scope: ['https://www.googleapis.com/auth/calendar.events']
+      });
+      res.json({ url });
+    });
+    
+    app.get('/calendar/callback', async (req, res) => {
+      const { code } = req.query;
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      try {
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, 'http://localhost:39871/calendar/callback');
+        const { tokens } = await oauth2Client.getToken(code);
+        global.googleTokens = tokens;
+        res.send('<h1 style="color:#22c55e;font-family:sans-serif;margin-top:20%;text-align:center">MindForge Calendar Sync Successful</h1><p style="text-align:center">You can close this tab now and return to the app.</p>');
+      } catch (err) {
+        res.status(500).send('<h1 style="color:#ef4444;font-family:sans-serif;margin-top:20%;text-align:center">Authentication failed</h1><p style="text-align:center">' + err.message + '</p>');
+      }
+    });
+
+    app.get('/calendar/status', (req, res) => {
+      res.json({ authenticated: !!global.googleTokens });
+    });
+    
+    app.post('/calendar/sync', async (req, res) => {
+      if (!global.googleTokens) return res.status(401).json({ error: 'Not authenticated with Google' });
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials(global.googleTokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      try {
+        const response = await calendar.events.list({
+          calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 15,
+          singleEvents: true, orderBy: 'startTime',
+        });
+        const events = response.data.items;
+        let syncedCount = 0;
+        
+        // Fetch existing task google event IDs so we don't duplicate
+        const existingTasks = await getMatrixTasks();
+        const existingEventIds = existingTasks.map(t => t.google_event_id).filter(Boolean);
+
+        for (const event of events) {
+          if (event.summary && !existingEventIds.includes(event.id) && !event.summary.startsWith('[DONE]')) {
+            await createMatrixTask(event.summary, 'inbox', event.id);
+            syncedCount++;
+          }
+        }
+        res.json({ ok: true, syncedCount });
+      } catch (err) { res.status(500).json({ error: err.message }); }
     });
 
     // ─── HTTP + WebSocket server ───
