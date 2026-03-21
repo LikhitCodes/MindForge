@@ -630,15 +630,15 @@ function getStartOfWeek(dateStr) {
  */
 function isStreakBroken(lastStreakDate, targetType, todayStr) {
   if (!lastStreakDate) return false;
-  
+
   const today = new Date(todayStr);
   today.setHours(0, 0, 0, 0);
-  
+
   const last = new Date(lastStreakDate);
   last.setHours(0, 0, 0, 0);
-  
+
   const daysDiff = Math.floor((today - last) / (1000 * 60 * 60 * 24));
-  
+
   if (targetType === 'daily') {
     return daysDiff > 1; // missed yesterday
   } else if (targetType === 'weekly') {
@@ -706,19 +706,19 @@ async function getTags() {
       await supabase.from('tags').update({ current_streak: newStreak }).eq('id', tag.id);
       tag.current_streak = newStreak;
     }
-    
+
     // Fetch today's / this week's logged minutes
     let rangeStart = todayStr;
     if (tag.target_type === 'weekly') {
       rangeStart = getStartOfWeek(todayStr);
     }
-    
+
     const { data: logs } = await supabase
       .from('tag_sessions')
       .select('minutes_logged')
       .eq('tag_id', tag.id)
       .gte('date', rangeStart);
-      
+
     const loggedMinutes = (logs || []).reduce((sum, row) => sum + (row.minutes_logged || 0), 0);
     tag.logged_minutes = loggedMinutes;
 
@@ -775,38 +775,38 @@ async function logTagSession(tagId, sessionId, minutesLogged, date) {
   if (tagErr || !tag) return;
 
   const todayStr = date;
-  
+
   // Calculate total logged in the target window (today or this week)
   let rangeStart = todayStr;
   if (tag.target_type === 'weekly') rangeStart = getStartOfWeek(todayStr);
-  
+
   const { data: logs } = await supabase
     .from('tag_sessions')
     .select('minutes_logged')
     .eq('tag_id', tagId)
     .gte('date', rangeStart);
-    
+
   const totalLogged = (logs || []).reduce((sum, row) => sum + (row.minutes_logged || 0), 0);
 
   // If target is met
   if (totalLogged >= tag.target_minutes) {
     // Avoid double counting streak for the same target window
     let periodIdentified = tag.target_type === 'daily' ? todayStr : getStartOfWeek(todayStr);
-    let lastPeriodIdentified = tag.last_streak_date 
+    let lastPeriodIdentified = tag.last_streak_date
       ? (tag.target_type === 'daily' ? tag.last_streak_date : getStartOfWeek(tag.last_streak_date))
       : null;
 
     if (periodIdentified !== lastPeriodIdentified) {
       // Streak increments!
       let newStreak = tag.current_streak + 1;
-      
+
       // But wait! Was it already broken?
       if (isStreakBroken(tag.last_streak_date, tag.target_type, todayStr)) {
-        newStreak = 1; 
+        newStreak = 1;
       }
-      
+
       const longestStreak = Math.max(tag.longest_streak, newStreak);
-      
+
       await supabase.from('tags').update({
         current_streak: newStreak,
         longest_streak: longestStreak,

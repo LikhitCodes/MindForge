@@ -80,7 +80,7 @@ function startDjangoBridge(sessionId) {
         ) {
           broadcast(msg); // forward to all Express WS clients (Electron)
         }
-      } catch (_) {}
+      } catch (_) { }   
     });
     djangoWs.on('error', (e) => console.warn('[Bridge] Django WS error:', e.message));
     djangoWs.on('close', () => console.log('[Bridge] Django WS closed'));
@@ -139,7 +139,7 @@ function startServer() {
     app.post('/ai-validate', async (req, res) => {
       const { appName } = req.body;
       if (!appName) return res.status(400).json({ error: 'AppName is required' });
-      
+
       try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -170,22 +170,22 @@ or
         });
 
         if (!response.ok) {
-           const errText = await response.text();
-           throw new Error(`Groq API error: ${response.status} ${errText}`);
+          const errText = await response.text();
+          throw new Error(`Groq API error: ${response.status} ${errText}`);
         }
 
         const data = await response.json();
         let content = data.choices[0].message.content;
-        
+
         // Safely extract JSON from markdown if model wrapped it
         const jsonStart = content.indexOf('{');
         const jsonEnd = content.lastIndexOf('}');
         if (jsonStart !== -1 && jsonEnd !== -1) {
           content = content.substring(jsonStart, jsonEnd + 1);
         }
-        
+
         const parsed = JSON.parse(content);
-        
+
         console.log(`[AI] Validated "${appName}": Productive=${parsed.isProductive} — ${parsed.reason}`);
         res.json(parsed);
       } catch (err) {
@@ -253,9 +253,9 @@ or
 
           // Log to subject tag if applicable
           if (summary.tagId) {
-             const loggedMinutes = Math.max(1, summary.duration_minutes || summary.deep_work_minutes || 1);
-             const dateStr = new Date(summary.start_time).toISOString().slice(0, 10);
-             await logTagSession(summary.tagId, summary.id, loggedMinutes, dateStr);
+            const loggedMinutes = Math.max(1, summary.duration_minutes || summary.deep_work_minutes || 1);
+            const dateStr = new Date(summary.start_time).toISOString().slice(0, 10);
+            await logTagSession(summary.tagId, summary.id, loggedMinutes, dateStr);
           }
 
           console.log('[Server] Session summary saved to Supabase');
@@ -287,7 +287,7 @@ or
           try {
             const hostname = new URL(url).hostname;
             // Accumulate URL visits locally (total active_seconds will be imperfect here, mostly driven by tab_analytics payload later)
-            session.addBrowserTab(hostname, url, category, contentType, 0); 
+            session.addBrowserTab(hostname, url, category, contentType, 0);
           } catch (e) {
             // invalid URL parsing
           }
