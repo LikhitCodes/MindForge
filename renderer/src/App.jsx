@@ -14,6 +14,7 @@ import Session from './components/Session';
 import DistractionShield from './components/DistractionShield';
 import AmbientPlayer from './components/AmbientPlayer';
 import AuthPage from './components/AuthPage';
+import TagsManager from './components/TagsManager';
 
 const MAIN_NAV = [
   { label: 'Dashboard', path: '/' },
@@ -21,6 +22,7 @@ const MAIN_NAV = [
   { label: 'Pomodoro', path: '/pomodoro' },
   { label: 'Habits', path: '/habits' },
   { label: 'Analytics', path: '/analytics' },
+  { label: 'Tags', path: '/tags' },
   { label: 'Focus Room', path: '/room' },
 ];
 
@@ -112,6 +114,7 @@ export default function App() {
           <Route path="/pomodoro" element={<PomodoroTimer />} />
           <Route path="/habits" element={<DailyHabits />} />
           <Route path="/analytics" element={<AnalyticsDashboard />} />
+          <Route path="/tags" element={<TagsManager />} />
           <Route path="/room" element={<FocusRoom />} />
         </Routes>
       </div>

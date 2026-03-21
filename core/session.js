@@ -19,7 +19,7 @@ let currentSession = null;
 /**
  * Start a new focus session
  */
-function startSession(goal = 'Focus Session', mode = 'basic', allowedApps = []) {
+function startSession(goal = 'Focus Session', mode = 'basic', allowedApps = [], tagId = null) {
   if (currentSession) {
     console.log('[Session] Session already active, ending previous one first');
     const summary = endSession();
@@ -31,6 +31,7 @@ function startSession(goal = 'Focus Session', mode = 'basic', allowedApps = []) 
     startTime: Date.now(),
     goal,
     mode, // 'basic' or 'exam'
+    tagId, // tied subject tag
     allowedApps: allowedApps.map(a => a.toLowerCase()),
     events: [],
     scores: [],
@@ -46,6 +47,7 @@ function startSession(goal = 'Focus Session', mode = 'basic', allowedApps = []) 
     goal,
     mode,
     allowedApps,
+    tagId,
   };
 }
 
@@ -95,6 +97,7 @@ function endSession() {
     contentTypeBreakdown,
     scores: [...session.scores],
     browserTabs: browserTabsArray, // per-site data from extension
+    tagId: session.tagId,
   };
 
   console.log(`[Session] ⏹ Ended: "${session.goal}" — ${durationMinutes}min, avg score: ${avgScore}, deep work: ${deepWorkMinutes}min`);
@@ -222,6 +225,7 @@ function getStatus() {
     id: currentSession.id,
     goal: currentSession.goal,
     mode: currentSession.mode,
+    tagId: currentSession.tagId,
     allowedApps: currentSession.allowedApps,
     startTime: currentSession.startTime,
     elapsedMinutes,

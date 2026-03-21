@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, Tooltip } from 'recharts';
-import { dashboardApi, scoreToHeatColor } from '../api';
+import { dashboardApi, scoreToHeatColor, tagsApi } from '../api';
 
 function useSplineScript() {
   useEffect(() => {
@@ -67,16 +67,18 @@ export default function Dashboard() {
   const [debt, setDebt]       = useState(null);   // { debt_minutes }
   const [matrix, setMatrix]   = useState(buildFallbackMatrix());
   const [summary, setSummary] = useState(null);   // { totalDeepWork, habitsCompleted, habitsTotal, avgScore }
+  const [tags, setTags] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const [rampRes, debtRes, heatRes, sumRes] = await Promise.allSettled([
+        const [rampRes, debtRes, heatRes, sumRes, tagsRes] = await Promise.allSettled([
           dashboardApi.ramp(),
           dashboardApi.debt(),
           dashboardApi.heatmap(),
           dashboardApi.summary(),
+          tagsApi.getAll(),
         ]);
         if (rampRes.status === 'fulfilled') setRamp(rampRes.value);
         if (debtRes.status === 'fulfilled') setDebt(debtRes.value);
@@ -84,6 +86,7 @@ export default function Dashboard() {
           setMatrix(heatmapDataToMatrix(heatRes.value));
         }
         if (sumRes.status === 'fulfilled') setSummary(sumRes.value);
+        if (tagsRes.status === 'fulfilled') setTags(tagsRes.value || []);
       } catch (_) {}
       setLoading(false);
     }
@@ -269,6 +272,33 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+
+          {/* ROW 4: Subject Target Progress */}
+          {tags.length > 0 && (
+            <div style={{ marginTop: '24px' }}>
+              <h3 style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>Subject Targets</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                {tags.map(tag => {
+                  const pct = Math.min(100, Math.round(((tag.logged_minutes || 0) / tag.target_minutes) * 100));
+                  return (
+                    <div key={tag.id} style={{ ...CARD, padding: '16px 20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ color: '#fff', fontSize: '15px', fontWeight: 600 }}>{tag.name}</span>
+                        <span style={{ color: '#9ca3af', fontSize: '13px' }}>{tag.logged_minutes || 0} / {tag.target_minutes}m</span>
+                      </div>
+                      <div style={{ height: '6px', background: '#000', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: tag.color || '#22c55e', borderRadius: '4px' }} />
+                      </div>
+                      <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{tag.target_type === 'daily' ? 'Today' : 'This Week'}</span>
+                        {pct >= 100 && <span style={{ color: tag.color || '#22c55e', fontWeight: 600 }}>Done ✓</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
       </div>

@@ -107,6 +107,28 @@ CREATE TABLE IF NOT EXISTS content_preferences (
   total_neutral_seconds INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS tags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id),
+  name TEXT NOT NULL,
+  color TEXT,
+  target_minutes INTEGER NOT NULL,
+  target_type TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  current_streak INTEGER DEFAULT 0,
+  longest_streak INTEGER DEFAULT 0,
+  last_streak_date TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tag_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id),
+  tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+  minutes_logged INTEGER,
+  date TEXT NOT NULL
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events (timestamp);
 CREATE INDEX IF NOT EXISTS idx_scores_timestamp ON scores (timestamp);
@@ -118,6 +140,8 @@ CREATE INDEX IF NOT EXISTS idx_tab_analytics_timestamp ON tab_analytics (timesta
 CREATE INDEX IF NOT EXISTS idx_tab_analytics_category ON tab_analytics (category);
 CREATE INDEX IF NOT EXISTS idx_tab_analytics_session ON tab_analytics (session_id);
 CREATE INDEX IF NOT EXISTS idx_content_preferences_date ON content_preferences (date);
+CREATE INDEX IF NOT EXISTS idx_tag_sessions_date ON tag_sessions (date);
+CREATE INDEX IF NOT EXISTS idx_tag_sessions_tag_id ON tag_sessions (tag_id);
 
 -- =============================================
 -- Row Level Security (RLS)
@@ -132,6 +156,8 @@ ALTER TABLE ramp ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tab_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tag_sessions ENABLE ROW LEVEL SECURITY;
 
 -- Drop old "allow all" policies safely if they exist
 DROP POLICY IF EXISTS "Allow all on events" ON events;
@@ -152,6 +178,8 @@ CREATE POLICY "Users can manage ramp" ON ramp FOR ALL USING (auth.uid() = user_i
 CREATE POLICY "Users can manage session_sites" ON session_sites FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can manage tab_analytics" ON tab_analytics FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can manage content_preferences" ON content_preferences FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage tags" ON tags FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage tag_sessions" ON tag_sessions FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 -- =============================================
 -- Focus Rooms
