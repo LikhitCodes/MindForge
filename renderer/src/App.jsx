@@ -26,8 +26,30 @@ const MAIN_NAV = [
 
 export default function App() {
   const location = useLocation();
+  const { user, loading, signOut } = useAuth();
   const isHabits = location.pathname === '/habits';
 
+  // ─── Loading state ───
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', width: '100vw', alignItems: 'center', justifyContent: 'center', background: '#000000' }}>
+        <div style={{
+          width: '32px', height: '32px',
+          border: '3px solid rgba(255,255,255,0.1)',
+          borderTopColor: '#ffffff',
+          borderRadius: '50%',
+          animation: 'spin 0.6s linear infinite',
+        }} />
+      </div>
+    );
+  }
+
+  // ─── Not authenticated → show login ───
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  // ─── Authenticated → main app ───
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', background: '#000000', overflow: 'hidden', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
 
@@ -44,7 +66,7 @@ export default function App() {
           <span style={{ color: '#ffffff', fontSize: '18px', fontWeight: 600 }}>MindForge</span>
         </div>
 
-        {/* Right: Nav links */}
+        {/* Right: Nav links + sign out */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '40px' }}>
           {MAIN_NAV.map(item => {
             const isActive = item.path === '/'
@@ -64,6 +86,21 @@ export default function App() {
               <span>1/3 Do</span>
             </div>
           )}
+
+          {/* Sign out button */}
+          <button
+            onClick={signOut}
+            style={{
+              background: 'none', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '8px', padding: '6px 14px', fontSize: '13px',
+              color: '#6b7280', cursor: 'pointer', transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#6b7280'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+            title={`Signed in as ${user.email}`}
+          >
+            Sign Out
+          </button>
         </div>
       </nav>
 
