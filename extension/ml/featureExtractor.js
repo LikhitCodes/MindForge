@@ -70,7 +70,7 @@ function buildTFVector(text) {
 
 // ─── Meta Features ───
 // Additional non-text features appended to the vector
-const META_FEATURES_COUNT = 8;
+const META_FEATURES_COUNT = 10;
 
 /**
  * Detect content type from extracted content signals.
@@ -175,6 +175,15 @@ export function extractFeatures(extractedContent, sessionGoal = '') {
   // 8. TLD education/org signal (0 or 1)
   const eduTLDs = ['.edu', '.ac.', '.org', '.gov'];
   vec[metaStart + 7] = eduTLDs.some(tld => hostname.includes(tld)) ? 1 : 0;
+
+  // 9. Podcast content detected (0 or 1) — works across any site
+  const podcastSignals = ['podcast', 'episode', 'hosted by', 'listen now', 'show notes', 'subscribe to podcast'];
+  const isPodcast = podcastSignals.some(sig => allText.includes(sig)) ? 1 : 0;
+  vec[metaStart + 8] = isPodcast;
+
+  // 10. Has structured data (0 or 1) — content-rich pages tend to have schema.org data
+  const hasStructured = (extractedContent.structuredDataFound) ? 1 : 0;
+  vec[metaStart + 9] = hasStructured;
 
   return { vector: vec, contentType: ct };
 }
