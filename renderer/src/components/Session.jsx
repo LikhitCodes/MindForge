@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { sessionApi, useWebSocket, aiApi, systemApi, djangoApi, tagsApi } from '../api';
+import { sessionApi, useWebSocket, aiApi, systemApi, djangoApi, tagsApi, matrixApi } from '../api';
 
 /* ─── CSS animations ─────────────────────────────────── */
 const SPINNER_CSS = `
@@ -58,7 +58,7 @@ const CARD = { background: '#111111', borderRadius: '16px', padding: '28px', bor
 /* ═══════════════════════════════════════════════════════
    STATE 1 — Initialize Core
    ═══════════════════════════════════════════════════════ */
-function InitPage({ goal, setGoal, mode, setMode, apps, setApps, tagId, setTagId, tags, onBoot, booting }) {
+function InitPage({ goal, setGoal, mode, setMode, apps, setApps, tagId, setTagId, tags, focusTasks, selectedTaskId, setSelectedTaskId, onBoot, booting }) {
   const [newApp, setNewApp] = useState('');
   const [aiChecking, setAiChecking] = useState(false);
   const [aiMsg, setAiMsg] = useState('');
@@ -90,7 +90,28 @@ function InitPage({ goal, setGoal, mode, setMode, apps, setApps, tagId, setTagId
         <h2 style={{ color: '#fff', fontSize: '24px', fontWeight: 700, margin: '0 0 28px 0' }}>Initialize Core</h2>
 
         <label style={{ color: '#6b7280', fontSize: '14px', display: 'block', marginBottom: '8px' }}>Main objective...</label>
-        <input value={goal} onChange={e => setGoal(e.target.value)} placeholder="What will you work on?"
+        {focusTasks && focusTasks.length > 0 && (
+          <select 
+            value={selectedTaskId || ''} 
+            onChange={e => {
+              const id = e.target.value;
+              setSelectedTaskId(id);
+              if (id) {
+                const t = focusTasks.find(x => x.id === id);
+                if (t) setGoal(t.title);
+              } else {
+                setGoal('');
+              }
+            }}
+            style={{ width: '100%', height: '48px', background: '#1a1a1a', border: '1px solid #2d2d2d', borderRadius: '10px', padding: '0 16px', color: '#fff', fontSize: '15px', outline: 'none', appearance: 'none', cursor: 'pointer', marginBottom: '12px' }}
+          >
+            <option value="">-- Custom Goal --</option>
+            {focusTasks.map(t => (
+              <option key={t.id} value={t.id}>{t.title} ({t.quadrant === 'do_first' ? 'Do First' : 'Schedule'})</option>
+            ))}
+          </select>
+        )}
+        <input value={goal} onChange={e => { setGoal(e.target.value); setSelectedTaskId(''); }} placeholder="What will you work on?"
           style={{ width: '100%', height: '48px', background: '#1a1a1a', border: '1px solid #2d2d2d', borderRadius: '10px', padding: '0 16px', color: '#fff', fontSize: '15px', outline: 'none', boxSizing: 'border-box' }} />
 
         <label style={{ color: '#9ca3af', fontSize: '14px', display: 'block', marginTop: '20px', marginBottom: '10px' }}>Focus Intensity:</label>
@@ -518,6 +539,8 @@ export default function Session() {
   const [pwaUrl, setPwaUrl] = useState(null);          // Full PWA URL for QR (from Django)
   const [pcIp, setPcIp] = useState(null);
   const [booting, setBooting] = useState(false);
+  const [focusTasks, setFocusTasks] = useState([]);
+  const [selectedTaskId, setSelectedTaskId] = useState('');
 
   // On mount: fetch network IP + check for existing active session
   useEffect(() => {
@@ -528,6 +551,10 @@ export default function Session() {
     tagsApi.getAll()
       .then(data => setTags(data || []))
       .catch(() => {});
+
+    matrixApi.getTasks().then(data => {
+      setFocusTasks((data || []).filter(t => (t.quadrant === 'do_first' || t.quadrant === 'schedule') && !t.completed));
+    }).catch(() => {});
 
     sessionApi.status().then(status => {
       if (status.active) {
@@ -591,15 +618,22 @@ export default function Session() {
     }
   }
 
-  async function handleEnd() {
+    async function handleEnd() {
     // End both sessions
     try { await sessionApi.end(); } catch (_) {}
     if (djangoSessionId && pcIp) {
       try { await djangoApi.endSession(djangoSessionId, pcIp); } catch (_) {}
     }
+    
+    // Complete Eisenhower Task if one was selected
+    if (selectedTaskId) {
+      try { await matrixApi.completeTask(selectedTaskId); } catch (_) {}
+    }
+
     setSessionId(null);
     setDjangoSessionId(null);
     setPwaUrl(null);
+    setSelectedTaskId('');
     setState('init');
   }
 
@@ -612,6 +646,7 @@ export default function Session() {
           mode={mode} setMode={setMode}
           apps={apps} setApps={setApps}
           tagId={tagId} setTagId={setTagId} tags={tags}
+          focusTasks={focusTasks} selectedTaskId={selectedTaskId} setSelectedTaskId={setSelectedTaskId}
           onBoot={handleBoot} booting={booting}
         />
       )}
