@@ -50,6 +50,11 @@ const DISTRACTION_SIGNALS = [
   'prank', 'reaction', 'roast', 'rant', 'cringe', 'fail',
   'unboxing', 'haul', 'mukbang', 'asmr', 'compilation',
   "we're so back", 'hot take', 'beef', 'exposed',
+  'clickbait', 'subscribe', 'giveaway', 'scandal',
+  'binge watch', 'episode recap', 'fan theory', 'fandom',
+  'dating', 'relationship drama', 'party mix', 'top hits',
+  'satisfying', 'oddly satisfying', 'try not to laugh',
+  'gone wrong', 'pov', 'storytime', 'grwm',
 ];
 
 const PRODUCTIVE_SIGNALS = [
@@ -61,9 +66,18 @@ const PRODUCTIVE_SIGNALS = [
   'textbook', 'syllabus', 'chapter', 'exam', 'notes', 'education',
   'university', 'college', 'academic', 'fundamentals', 'concepts',
   'introduction', 'overview', 'explained', 'deep dive',
+  'workshop', 'seminar', 'conference', 'masterclass',
+  'problem solving', 'mathematics', 'physics', 'chemistry',
+  'biology', 'statistics', 'machine learning', 'artificial intelligence',
+  'neural network', 'data science', 'computer science',
+  'open source', 'repository', 'pull request', 'code review',
+  'documentation', 'specification', 'technical', 'implementation',
+  'focus music', 'study playlist', 'concentration', 'deep work',
+  'white noise', 'study session', 'revision', 'thesis',
+  'educational podcast', 'tech talk',
 ];
 
-function keywordClassify(extractedContent) {
+function keywordClassify(extractedContent, sessionGoal = '') {
   const title = (extractedContent.title || '').toLowerCase();
   const content = (extractedContent.content || '').toLowerCase();
   const url = (extractedContent.url || '').toLowerCase();
@@ -71,20 +85,43 @@ function keywordClassify(extractedContent) {
 
   let distractionScore = 0;
   for (const kw of DISTRACTION_SIGNALS) {
-    if (allText.includes(kw)) distractionScore++;
+    // Title matches are weighted higher — they're more reliable indicators
+    if (title.includes(kw)) distractionScore += 2;
+    else if (allText.includes(kw)) distractionScore++;
   }
 
   let productiveScore = 0;
   for (const kw of PRODUCTIVE_SIGNALS) {
-    if (allText.includes(kw)) productiveScore++;
+    if (title.includes(kw)) productiveScore += 2;
+    else if (allText.includes(kw)) productiveScore++;
+  }
+
+  // Goal-contextual boost: if the session goal overlaps with page content,
+  // dynamically boost the productive score. This is how "ML video on YouTube"
+  // becomes productive when your goal is "Machine Learning study".
+  if (sessionGoal) {
+    const goalWords = sessionGoal.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    let goalMatches = 0;
+    for (const word of goalWords) {
+      if (allText.includes(word)) goalMatches++;
+    }
+    if (goalWords.length > 0) {
+      const goalOverlap = goalMatches / goalWords.length;
+      if (goalOverlap >= 0.3) {
+        // Significant goal overlap — boost productive score proportionally
+        productiveScore += Math.round(goalOverlap * 5);
+      }
+    }
   }
 
   if (productiveScore > distractionScore && productiveScore >= 1) {
-    return { category: 'productive', confidence: 0.3 + Math.min(productiveScore * 0.05, 0.2), label: 'keyword: educational content' };
+    const conf = Math.min(0.3 + productiveScore * 0.04, 0.65);
+    return { category: 'productive', confidence: conf, label: 'keyword: educational content' };
   }
 
   if (distractionScore > productiveScore && distractionScore >= 1) {
-    return { category: 'distraction', confidence: 0.3 + Math.min(distractionScore * 0.05, 0.2), label: 'keyword: entertainment content' };
+    const conf = Math.min(0.3 + distractionScore * 0.04, 0.65);
+    return { category: 'distraction', confidence: conf, label: 'keyword: entertainment content' };
   }
 
   return { category: 'neutral', confidence: 0.25, label: 'keyword: uncertain content' };
@@ -148,7 +185,7 @@ async function classify(extractedContent, sessionGoal, userAllowlist = [], userB
     featureResult = extractFeatures(extractedContent, sessionGoal);
   } catch (err) {
     console.warn('[MindForge] Feature extraction failed:', err.message);
-    const kwResult = keywordClassify(extractedContent);
+    const kwResult = keywordClassify(extractedContent, sessionGoal);
     return { ...kwResult, contentType: 'text', method: 'keyword-fallback-error' };
   }
 
@@ -192,8 +229,8 @@ async function classify(extractedContent, sessionGoal, userAllowlist = [], userB
     console.warn('[MindForge] Naive Bayes classification failed:', err.message);
   }
 
-  // ─── Stage 4: Keyword fallback ───
-  const kwResult = keywordClassify(extractedContent);
+  // ─── Stage 4: Keyword fallback (now goal-aware) ───
+  const kwResult = keywordClassify(extractedContent, sessionGoal);
   const icon = kwResult.category === 'distraction' ? '✗' : kwResult.category === 'productive' ? '✓' : '—';
   console.log(`[MindForge] ${icon} ${kwResult.category.toUpperCase()} (keyword-fallback): ${hostname} — ${kwResult.label}`);
 

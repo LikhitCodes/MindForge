@@ -12,7 +12,6 @@ const TIER1_DISTRACTIONS = [
   'facebook.com',
   'snapchat.com',
   'twitch.tv',
-  'reddit.com',
   'pinterest.com',
   'tumblr.com',
   '9gag.com',
