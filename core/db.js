@@ -107,13 +107,11 @@ async function insertScore(score) {
 }
 
 /**
- * Get heatmap data: avg focus score grouped by day-of-week and hour
- * Since Supabase doesn't support complex aggregation easily,
- * we pull raw scores and aggregate in JS
+ * Get heatmap data: 365-day contribution grid (LeetCode/GitHub style).
+ * Returns [{date, avg_score, count}] for the last year.
  */
 async function getHeatmapData() {
-  // Get scores from last 7 days
-  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const since = Date.now() - 365 * 24 * 60 * 60 * 1000;
   const { data, error } = await supabase
     .from('scores')
     .select('timestamp, score')
@@ -125,22 +123,139 @@ async function getHeatmapData() {
     return [];
   }
 
-  // Group by day-of-week (0=Sun..6=Sat) and hour (0-23)
+  // Group by date string (YYYY-MM-DD)
   const buckets = {};
   (data || []).forEach((row) => {
-    const d = new Date(row.timestamp);
-    const day = d.getDay(); // 0=Sun
-    const hour = d.getHours();
-    const key = `${day}-${hour}`;
-    if (!buckets[key]) buckets[key] = { day, hour, scores: [] };
-    buckets[key].scores.push(row.score);
+    const dateStr = new Date(row.timestamp).toISOString().slice(0, 10);
+    if (!buckets[dateStr]) buckets[dateStr] = { date: dateStr, scores: [] };
+    buckets[dateStr].scores.push(row.score);
   });
 
   return Object.values(buckets).map((b) => ({
-    day: b.day,
-    hour: b.hour,
+    date: b.date,
     avg_score: Math.round(b.scores.reduce((a, c) => a + c, 0) / b.scores.length),
+    count: b.scores.length,
   }));
+}
+
+/**
+ * Get detailed per-hostname tab analytics for the last N days.
+ * For each hostname: total_seconds, productive_seconds, distraction_seconds, neutral_seconds, visits.
+ */
+async function getDetailedTabAnalytics(days = 7) {
+  if (!supabase) return [];
+
+  const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const sinceTs = Date.now() - days * 24 * 60 * 60 * 1000;
+
+  // Query BOTH tables and merge
+  const [sessionSitesRes, tabAnalyticsRes] = await Promise.allSettled([
+    supabase.from('session_sites').select('hostname, category, active_seconds, visits').gte('date', sinceDate),
+    supabase.from('tab_analytics').select('hostname, category, active_seconds').gte('timestamp', sinceTs),
+  ]);
+
+  // Aggregate by hostname
+  const hostMap = {};
+
+  function addRow(hostname, category, seconds, visits) {
+    if (!hostname) return;
+    const h = hostname.replace(/^www\./, '');
+    if (!hostMap[h]) hostMap[h] = { hostname: h, total_seconds: 0, productive_seconds: 0, distraction_seconds: 0, neutral_seconds: 0, visits: 0 };
+    const sec = seconds || 0;
+    hostMap[h].total_seconds += sec;
+    hostMap[h].visits += visits || 0;
+    const cat = (category || 'neutral').toLowerCase();
+    if (cat === 'productive') hostMap[h].productive_seconds += sec;
+    else if (cat === 'distraction') hostMap[h].distraction_seconds += sec;
+    else hostMap[h].neutral_seconds += sec;
+  }
+
+  // Merge session_sites data
+  if (sessionSitesRes.status === 'fulfilled' && sessionSitesRes.value.data) {
+    sessionSitesRes.value.data.forEach(row => addRow(row.hostname, row.category, row.active_seconds, row.visits));
+  }
+
+  // Merge tab_analytics data (visits counted as 1 per row since it doesn't have a visits column)
+  if (tabAnalyticsRes.status === 'fulfilled' && tabAnalyticsRes.value.data) {
+    tabAnalyticsRes.value.data.forEach(row => addRow(row.hostname, row.category, row.active_seconds, 1));
+  }
+
+  return Object.values(hostMap).sort((a, b) => b.total_seconds - a.total_seconds);
+}
+
+/**
+ * Get dashboard overview stats for a given range.
+ * @param {'day'|'week'|'month'} range
+ */
+async function getDashboardStats(range = 'week') {
+  if (!supabase) return {};
+
+  const daysMap = { day: 1, week: 7, month: 30 };
+  const days = daysMap[range] || 7;
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+
+  // Sessions in range
+  const { data: sessions } = await supabase
+    .from('sessions')
+    .select('id, goal, avg_score, deep_work_minutes, productive_sec, distraction_sec, neutral_sec, start_time, end_time')
+    .gte('start_time', since)
+    .order('start_time', { ascending: true });
+
+  const sess = sessions || [];
+  const totalSessions = sess.length;
+  const totalDeepWorkMin = sess.reduce((s, r) => s + (r.deep_work_minutes || 0), 0);
+  const scoresArr = sess.filter(s => s.avg_score).map(s => s.avg_score);
+  const avgFocusScore = scoresArr.length > 0 ? Math.round(scoresArr.reduce((a, b) => a + b, 0) / scoresArr.length) : 0;
+  const totalProductiveSec = sess.reduce((s, r) => s + (r.productive_sec || 0), 0);
+  const totalDistractionSec = sess.reduce((s, r) => s + (r.distraction_sec || 0), 0);
+  const totalNeutralSec = sess.reduce((s, r) => s + (r.neutral_sec || 0), 0);
+
+  // Daily breakdown for charts
+  const dailyMap = {};
+  sess.forEach(s => {
+    const day = new Date(s.start_time).toISOString().slice(0, 10);
+    if (!dailyMap[day]) dailyMap[day] = { date: day, sessions: 0, deepWork: 0, totalScore: 0, scoreCount: 0 };
+    dailyMap[day].sessions += 1;
+    dailyMap[day].deepWork += s.deep_work_minutes || 0;
+    if (s.avg_score) { dailyMap[day].totalScore += s.avg_score; dailyMap[day].scoreCount += 1; }
+  });
+  const dailyStats = Object.values(dailyMap).map(d => ({
+    date: d.date, sessions: d.sessions, deepWork: d.deepWork,
+    avgScore: d.scoreCount > 0 ? Math.round(d.totalScore / d.scoreCount) : 0,
+  }));
+
+  // Streak
+  const { data: habits } = await supabase
+    .from('daily_habits')
+    .select('streak_count')
+    .order('date', { ascending: false })
+    .limit(1);
+  const currentStreak = habits && habits.length > 0 ? (habits[0].streak_count || 0) : 0;
+
+  return {
+    avgFocusScore, totalSessions, totalDeepWorkMin,
+    totalProductiveSec, totalDistractionSec, totalNeutralSec,
+    currentStreak, dailyStats,
+  };
+}
+
+/**
+ * Get paginated session history.
+ */
+async function getSessionHistory(limit = 20, offset = 0) {
+  if (!supabase) return { sessions: [], total: 0 };
+
+  const { data, error, count } = await supabase
+    .from('sessions')
+    .select('id, goal, avg_score, deep_work_minutes, start_time, end_time, productive_sec, distraction_sec, neutral_sec', { count: 'exact' })
+    .order('start_time', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    console.error('[DB] getSessionHistory error:', error.message);
+    return { sessions: [], total: 0 };
+  }
+  return { sessions: data || [], total: count || 0 };
 }
 
 /**
@@ -975,6 +1090,9 @@ module.exports = {
   insertSessionSites,
   getPerSiteAnalytics,
   getSessionSites,
+  getDetailedTabAnalytics,
+  getDashboardStats,
+  getSessionHistory,
   // Focus Rooms
   createRoom,
   getRoomByCode,
