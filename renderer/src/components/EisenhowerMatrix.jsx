@@ -63,6 +63,22 @@ export default function EisenhowerMatrix() {
     }
   }
 
+  async function handleScaleCalendar() {
+    setSyncing(true);
+    try {
+      const res = await calendarApi.export();
+      if (res.ok) {
+        alert(`Exported ${res.exportedCount} tasks to Google Calendar!`);
+        loadTasks(); // refresh to show calendar icons
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to export tasks: ' + err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function addTask(e) {
     if (e && e.key !== 'Enter') return;
     if (!newTaskTitle.trim()) return;
@@ -129,10 +145,18 @@ export default function EisenhowerMatrix() {
           <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#fff', margin: '0 0 8px 0' }}>Eisenhower Matrix</h1>
           <p style={{ fontSize: '15px', color: '#9ca3af', margin: 0 }}>Filter the noise. Focus on the Schedule quadrant to build your empire.</p>
         </div>
-        <button onClick={handleSyncCalendar} disabled={syncing}
-          style={{ background: '#1a1a1a', border: '1px solid #2d2d2d', borderRadius: '8px', padding: '10px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {syncing ? 'Syncing...' : calAuth ? '🔄 Sync Calendar' : '🔗 Connect Google Calendar'}
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          {calAuth && (
+            <button onClick={handleScaleCalendar} disabled={syncing}
+              style={{ background: '#22c55e', border: 'none', borderRadius: '8px', padding: '10px 16px', color: '#111', fontSize: '14px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {syncing ? 'Exporting...' : '📅 Turn Matrix to Calendar'}
+            </button>
+          )}
+          <button onClick={handleSyncCalendar} disabled={syncing}
+            style={{ background: '#1a1a1a', border: '1px solid #2d2d2d', borderRadius: '8px', padding: '10px 16px', color: '#fff', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {syncing ? 'Syncing...' : calAuth ? '🔄 Pull Calendar Events' : '🔗 Connect Google Calendar'}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
