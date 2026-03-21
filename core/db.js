@@ -354,6 +354,105 @@ async function getStudyHabits() {
     totalSessions: (sessions || []).length,
   };
 }
+// ═══════════════════════════════════════
+//  SESSION SITES FUNCTIONS (Extension Browser Data)
+// ═══════════════════════════════════════
+
+/**
+ * Batch insert per-site browser analytics linked to a session.
+ * Called when a session ends, from the browserTabs accumulator.
+ * @param {string} sessionId
+ * @param {Array} sites - [{hostname, category, contentType, active_seconds, visits}]
+ * @param {string} date - YYYY-MM-DD
+ */
+async function insertSessionSites(sessionId, sites, date) {
+  if (!supabase || !sessionId || !sites || sites.length === 0) return;
+
+  const rows = sites.map(site => ({
+    session_id: sessionId,
+    hostname: site.hostname,
+    category: site.category || 'neutral',
+    content_type: site.contentType || site.content_type || 'text',
+    active_seconds: site.active_seconds || 0,
+    visits: site.visits || 1,
+    date: date || new Date().toISOString().slice(0, 10),
+    timestamp: Date.now(),
+  }));
+
+  const { error } = await supabase.from('session_sites').insert(rows);
+  if (error) console.error('[DB] insertSessionSites error:', error.message);
+  else console.log(`[DB] Inserted ${rows.length} session_sites rows for session ${sessionId.slice(0, 8)}`);
+}
+
+/**
+ * Get per-site analytics aggregated across all sessions for the last N days.
+ * Returns sites sorted by total time spent (descending) — for "Top Time Sinks" chart.
+ * @param {number} days
+ * @param {string} [category] - optional filter: 'productive' | 'distraction' | 'neutral'
+ */
+async function getPerSiteAnalytics(days = 7, category = null) {
+  if (!supabase) return [];
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  let query = supabase
+    .from('session_sites')
+    .select('hostname, category, content_type, active_seconds, visits')
+    .gte('date', since);
+
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[DB] getPerSiteAnalytics error:', error.message);
+    return [];
+  }
+
+  // Aggregate by hostname
+  const siteMap = {};
+  (data || []).forEach(row => {
+    const key = row.hostname;
+    if (!siteMap[key]) {
+      siteMap[key] = {
+        hostname: key,
+        category: row.category,
+        content_type: row.content_type,
+        total_seconds: 0,
+        total_visits: 0,
+      };
+    }
+    siteMap[key].total_seconds += row.active_seconds || 0;
+    siteMap[key].total_visits += row.visits || 1;
+    // Use most recent classification (last write wins per aggregation)
+    siteMap[key].category = row.category;
+    siteMap[key].content_type = row.content_type;
+  });
+
+  return Object.values(siteMap).sort((a, b) => b.total_seconds - a.total_seconds);
+}
+
+/**
+ * Get per-site breakdown for a specific session.
+ * @param {string} sessionId
+ */
+async function getSessionSites(sessionId) {
+  if (!supabase || !sessionId) return [];
+
+  const { data, error } = await supabase
+    .from('session_sites')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('active_seconds', { ascending: false });
+
+  if (error) {
+    console.error('[DB] getSessionSites error:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
 /**
  * Get analytics data for a given range (week or month)
  */
@@ -490,4 +589,7 @@ module.exports = {
   getStudyHabits,
   getAnalyticsData,
   getTodaySummary,
+  insertSessionSites,
+  getPerSiteAnalytics,
+  getSessionSites,
 };

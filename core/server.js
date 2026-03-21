@@ -15,6 +15,9 @@ const {
   getStudyHabits,
   getAnalyticsData,
   getTodaySummary,
+  insertSessionSites,
+  getPerSiteAnalytics,
+  getSessionSites,
 } = require('./db');
 const { startScorer } = require('./scorer');
 const session = require('./session');
@@ -152,6 +155,10 @@ or
             browser_sec: summary.breakdown.browser,
             neutral_sec: summary.breakdown.neutral,
             idle_sec: summary.breakdown.idle,
+            text_sec: summary.contentTypeBreakdown.text,
+            video_sec: summary.contentTypeBreakdown.video,
+            interactive_sec: summary.contentTypeBreakdown.interactive,
+            audio_sec: summary.contentTypeBreakdown.audio,
           });
 
           // Also push the final score
@@ -159,6 +166,11 @@ or
             timestamp: Date.now(),
             score: summary.avg_score,
           });
+
+          // Save accrued per-site browser tracking
+          if (summary.browserTabs && summary.browserTabs.length > 0) {
+            await insertSessionSites(summary.id, summary.browserTabs);
+          }
 
           console.log('[Server] Session summary saved to Supabase');
         }
@@ -186,6 +198,13 @@ or
         // During active session, add to session memory
         if (session.isActive()) {
           session.addEvent('chrome', 'Chrome', url, category || 'browser', false, contentType || 'text');
+          try {
+            const hostname = new URL(url).hostname;
+            // Accumulate URL visits locally (total active_seconds will be imperfect here, mostly driven by tab_analytics payload later)
+            session.addBrowserTab(hostname, url, category, contentType, 0); 
+          } catch (e) {
+            // invalid URL parsing
+          }
         }
         res.json({ ok: true });
       } catch (err) {
@@ -238,6 +257,28 @@ or
       try {
         const days = parseInt(req.query.days) || 7;
         const data = await getTimeBreakdownDB(days);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Get Top Time Sinks (per-site aggregation across all sessions)
+    app.get('/analytics/per-site', async (req, res) => {
+      try {
+        const days = parseInt(req.query.days) || 7;
+        const category = req.query.category || null;
+        const data = await getPerSiteAnalytics(days, category);
+        res.json(data);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Get per-site analytics for a specific session ID
+    app.get('/analytics/session/:id', async (req, res) => {
+      try {
+        const data = await getSessionSites(req.params.id);
         res.json(data);
       } catch (err) {
         res.status(500).json({ error: err.message });

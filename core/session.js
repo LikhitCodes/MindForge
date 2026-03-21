@@ -35,6 +35,8 @@ function startSession(goal = 'Focus Session', mode = 'basic', allowedApps = []) 
     events: [],
     scores: [],
     violations: {}, // track violation start times
+    // Extension browser data accumulator — keyed by hostname, NOT pruned
+    browserTabs: {}, // { [hostname]: { hostname, category, contentType, active_seconds, visits, lastSeen } }
   };
 
   console.log(`[Session] ▶ Started: "${goal}" (ID: ${currentSession.id.slice(0, 8)}) [Mode: ${mode}]`);
@@ -77,6 +79,9 @@ function endSession() {
     (session.scores.filter(s => s >= 70).length * 30) / 60 // each score = 30s cycle
   );
 
+  // Flatten browserTabs map into an array for Supabase insertion
+  const browserTabsArray = Object.values(session.browserTabs || {});
+
   const summary = {
     id: session.id,
     start_time: session.startTime,
@@ -89,6 +94,7 @@ function endSession() {
     breakdown,
     contentTypeBreakdown,
     scores: [...session.scores],
+    browserTabs: browserTabsArray, // per-site data from extension
   };
 
   console.log(`[Session] ⏹ Ended: "${session.goal}" — ${durationMinutes}min, avg score: ${avgScore}, deep work: ${deepWorkMinutes}min`);
@@ -121,6 +127,51 @@ function addEvent(source, appName, url, category, isIdle = false, contentType = 
   if (currentSession.events.length > 200) {
     currentSession.events = currentSession.events.filter(e => e.timestamp >= fiveMinAgo);
   }
+}
+
+/**
+ * Add or merge a browser tab event from the Chrome extension.
+ * Called on every POST /browser-event during an active session.
+ * This accumulator is NOT pruned — it survives the full session.
+ * 
+ * @param {string} hostname  - e.g. "github.com"
+ * @param {string} url       - full URL
+ * @param {string} category  - "productive" | "distraction" | "neutral"
+ * @param {string} contentType - "text" | "video" | "audio" | "interactive"
+ * @param {number} elapsedSec - seconds since last event for this tab (optional, for accumulation)
+ */
+function addBrowserTab(hostname, url, category, contentType, elapsedSec = 0) {
+  if (!currentSession || !hostname) return;
+
+  const key = hostname.replace(/^www\./, '');
+  const existing = currentSession.browserTabs[key];
+
+  if (existing) {
+    // Update category/contentType to latest classification
+    existing.category = category || existing.category;
+    existing.contentType = contentType || existing.contentType;
+    existing.active_seconds += elapsedSec;
+    existing.visits += 1;
+    existing.lastSeen = Date.now();
+  } else {
+    currentSession.browserTabs[key] = {
+      hostname: key,
+      url: url || '',
+      category: category || 'neutral',
+      contentType: contentType || 'text',
+      active_seconds: elapsedSec,
+      visits: 1,
+      lastSeen: Date.now(),
+    };
+  }
+}
+
+/**
+ * Get the current browser tabs accumulator (snapshot for status checks)
+ */
+function getBrowserTabs() {
+  if (!currentSession) return {};
+  return { ...currentSession.browserTabs };
 }
 
 /**
@@ -275,4 +326,6 @@ module.exports = {
   getConfig,
   setViolationStart,
   clearViolation,
+  addBrowserTab,
+  getBrowserTabs,
 };
